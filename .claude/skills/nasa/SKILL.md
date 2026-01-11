@@ -89,15 +89,18 @@ function processItems(items: Item[]): void {
 }
 ```
 
-### Rule 4: Short Functions
+### Rule 4: Short Functions and Files
 
 **Original**: Restrict functions to a single printed page (60 lines).
 
 **TypeScript Adaptation**:
 - Functions should be **40 lines or fewer** (excluding blank lines and comments)
+- Files should be **300 lines or fewer** (excluding blank lines and comments)
 - One function, one responsibility
+- One file, one module/concern
 - If a function needs more lines, extract helper functions
-- Cyclomatic complexity should be 10 or lower
+- If a file exceeds the limit, split into separate modules
+- Cyclomatic complexity should be 10 or lower per function
 
 ```typescript
 // BAD: Long function doing multiple things
@@ -311,6 +314,7 @@ When reviewing code against NASA rules:
 - [ ] All loops have maximum iteration bounds
 - [ ] No object allocation in hot paths
 - [ ] Functions are 40 lines or fewer
+- [ ] Files are 300 lines or fewer
 - [ ] Inputs validated, outputs verified
 - [ ] Variables declared with minimal scope
 - [ ] All return values checked
