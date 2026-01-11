@@ -19,6 +19,7 @@ export interface ClassificationResult {
   subcategory?: AreaSubcategory;
   confidence: number;
   reasoning: string;
+  nextAction?: string;
 }
 
 export interface NotionEntry {
@@ -30,4 +31,5 @@ export interface NotionEntry {
   channelName: string;
   timestamp: Date;
   urls: string[];
+  nextAction?: string;
 }

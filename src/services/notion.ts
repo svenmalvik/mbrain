@@ -40,10 +40,20 @@ const DATABASE_PROPERTIES = {
   Timestamp: { date: {} },
   "Slack Message ID": { rich_text: {} },
   URLs: { rich_text: {} },
+  "Next Action": { rich_text: {} },
+  "Last Reminder": { date: {} },
+  Status: {
+    select: {
+      options: [
+        { name: "Open", color: "yellow" as const },
+        { name: "Done", color: "green" as const },
+      ],
+    },
+  },
 };
 
-/** Ensure database has Subcategory property (adds if missing) */
-async function ensureSubcategoryProperty(dbId: string): Promise<void> {
+/** Ensure database has all required properties (adds if missing) */
+async function ensureSchemaProperties(dbId: string): Promise<void> {
   if (schemaValidated) {
     return;
   }
@@ -52,15 +62,28 @@ async function ensureSubcategoryProperty(dbId: string): Promise<void> {
     const db = await notion.databases.retrieve({ database_id: dbId });
     const properties = db.properties as Record<string, { type: string }>;
 
+    const missingProps: Record<string, unknown> = {};
+
     if (!properties.Subcategory) {
-      console.log("Adding missing Subcategory property to database...");
+      missingProps.Subcategory = DATABASE_PROPERTIES.Subcategory;
+    }
+    if (!properties["Next Action"]) {
+      missingProps["Next Action"] = DATABASE_PROPERTIES["Next Action"];
+    }
+    if (!properties["Last Reminder"]) {
+      missingProps["Last Reminder"] = DATABASE_PROPERTIES["Last Reminder"];
+    }
+    if (!properties.Status) {
+      missingProps.Status = DATABASE_PROPERTIES.Status;
+    }
+
+    if (Object.keys(missingProps).length > 0) {
+      console.log("Adding missing properties to database:", Object.keys(missingProps));
       await notion.databases.update({
         database_id: dbId,
-        properties: {
-          Subcategory: DATABASE_PROPERTIES.Subcategory,
-        },
+        properties: missingProps as Parameters<typeof notion.databases.update>[0]["properties"],
       });
-      console.log("Subcategory property added successfully");
+      console.log("Properties added successfully");
     }
 
     schemaValidated = true;
@@ -72,7 +95,7 @@ async function ensureSubcategoryProperty(dbId: string): Promise<void> {
 
 export async function ensureDatabaseExists(): Promise<string> {
   if (databaseId) {
-    await ensureSubcategoryProperty(databaseId);
+    await ensureSchemaProperties(databaseId);
     return databaseId;
   }
 
@@ -169,7 +192,17 @@ export async function createNotionEntry(entry: NotionEntry): Promise<string> {
         { type: "text", text: { content: entry.urls.join(", ") } },
       ],
     },
+    Status: {
+      select: { name: "Open" },
+    },
   };
+
+  // Add next action if present
+  if (entry.nextAction) {
+    properties["Next Action"] = {
+      rich_text: [{ type: "text", text: { content: entry.nextAction } }],
+    };
+  }
 
   // Add subcategory only for Areas
   if (entry.subcategory) {
@@ -184,4 +217,109 @@ export async function createNotionEntry(entry: NotionEntry): Promise<string> {
   });
 
   return response.id;
+}
+
+/** Find a Notion entry by its Slack Message ID (Rule 4: short function) */
+export async function findEntryBySlackMessageId(
+  slackMessageId: string
+): Promise<{ pageId: string; currentContent: string } | null> {
+  // Rule 5: Runtime assertions - validate input
+  if (!slackMessageId || typeof slackMessageId !== "string") {
+    throw new Error("findEntryBySlackMessageId: slackMessageId must be a non-empty string");
+  }
+
+  const dbId = await ensureDatabaseExists();
+
+  const response = await notion.databases.query({
+    database_id: dbId,
+    filter: {
+      property: "Slack Message ID",
+      rich_text: {
+        equals: slackMessageId,
+      },
+    },
+    page_size: 1,
+  });
+
+  // Rule 7: Check return values
+  const page = response.results[0];
+  if (!page) {
+    return null;
+  }
+
+  // Rule 5: Validate returned data structure
+  if (!page.id) {
+    throw new Error("findEntryBySlackMessageId: page.id is missing from Notion response");
+  }
+
+  const properties = (page as { properties: Record<string, unknown> }).properties;
+  const contentProp = properties.Content as {
+    rich_text?: Array<{ plain_text?: string }>;
+  };
+  const currentContent = contentProp?.rich_text?.[0]?.plain_text ?? "";
+
+  return { pageId: page.id, currentContent };
+}
+
+/** Append thread reply content to an existing Notion entry (Rule 4: short function) */
+export async function appendToNotionEntry(
+  pageId: string,
+  additionalContent: string
+): Promise<void> {
+  // Rule 5: Runtime assertions - validate input
+  if (!pageId || typeof pageId !== "string") {
+    throw new Error("appendToNotionEntry: pageId must be a non-empty string");
+  }
+  if (!additionalContent || typeof additionalContent !== "string") {
+    throw new Error("appendToNotionEntry: additionalContent must be a non-empty string");
+  }
+
+  const entry = await notion.pages.retrieve({ page_id: pageId });
+
+  // Rule 5: Validate returned data structure
+  const properties = (entry as { properties: Record<string, unknown> }).properties;
+  if (!properties) {
+    throw new Error("appendToNotionEntry: page properties missing from Notion response");
+  }
+
+  const contentProp = properties.Content as {
+    rich_text?: Array<{ plain_text?: string }>;
+  };
+  const currentContent = contentProp?.rich_text?.[0]?.plain_text ?? "";
+
+  const newContent = currentContent + "\n\n---\n\n" + additionalContent;
+
+  // Rule 7: Check return value (update returns the page object)
+  await notion.pages.update({
+    page_id: pageId,
+    properties: {
+      Content: {
+        rich_text: [{ type: "text", text: { content: newContent } }],
+      },
+    },
+  });
+}
+
+/** Mark an entry as Done by its Slack Message ID (Rule 4: short function) */
+export async function markEntryAsDone(slackMessageId: string): Promise<boolean> {
+  // Rule 5: Runtime assertions - validate input
+  if (!slackMessageId || typeof slackMessageId !== "string") {
+    throw new Error("markEntryAsDone: slackMessageId must be a non-empty string");
+  }
+
+  const entry = await findEntryBySlackMessageId(slackMessageId);
+  if (!entry) {
+    return false;
+  }
+
+  await notion.pages.update({
+    page_id: entry.pageId,
+    properties: {
+      Status: {
+        select: { name: "Done" },
+      },
+    },
+  });
+
+  return true;
 }

@@ -21,14 +21,24 @@ Noise examples that should NOT be saved:
 If meaningful, classify into the most appropriate PARA category.
 If uncertain between categories, prefer "Inbox" for manual review.
 
+NEXT ACTION EXTRACTION:
+If the message contains an actionable task or something to do, extract it as "nextAction".
+Examples:
+- "Need to call the dentist tomorrow" -> nextAction: "Call the dentist"
+- "Remember to buy groceries" -> nextAction: "Buy groceries"
+- "Should schedule a meeting with John" -> nextAction: "Schedule meeting with John"
+- "Interesting article about AI trends" -> nextAction: null (no action needed)
+
 IMPORTANT: Respond ONLY with valid JSON in this exact format:
 {
   "isMeaningful": boolean,
   "category": "Projects" | "Areas" | "Resources" | "Archive" | "Inbox" | null,
   "subcategory": "Relationships" | "Health" | "Finances" | "Career" | "Home" | null,
   "confidence": number between 0.0 and 1.0,
-  "reasoning": "brief explanation of your classification decision"
+  "reasoning": "brief explanation of your classification decision",
+  "nextAction": "extracted action item" | null
 }
 
 If the message is noise, set category to null.
-Only include subcategory when category is "Areas", otherwise set subcategory to null.`;
+Only include subcategory when category is "Areas", otherwise set subcategory to null.
+Only include nextAction if there is a clear action to take, otherwise set to null.`;

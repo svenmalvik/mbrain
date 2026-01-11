@@ -21,6 +21,7 @@ interface ClaudeResponse {
   subcategory: AreaSubcategory | null;
   confidence: number;
   reasoning: string;
+  nextAction: string | null;
 }
 
 export async function classifyMessage(
@@ -80,6 +81,7 @@ export async function classifyMessage(
       subcategory: finalCategory === "Areas" ? result.subcategory ?? undefined : undefined,
       confidence: result.confidence,
       reasoning: result.reasoning,
+      nextAction: result.nextAction ?? undefined,
     };
   } catch (error) {
     console.error("Classification failed:", error);

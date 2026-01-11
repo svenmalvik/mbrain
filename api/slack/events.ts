@@ -2,7 +2,13 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { waitUntil } from "@vercel/functions";
 import crypto from "crypto";
 import { classifyMessage } from "../../src/services/claude.js";
-import { createNotionEntry, isDuplicate } from "../../src/services/notion.js";
+import {
+  createNotionEntry,
+  isDuplicate,
+  findEntryBySlackMessageId,
+  appendToNotionEntry,
+  markEntryAsDone,
+} from "../../src/services/notion.js";
 import { extractUrls } from "../../src/services/url-extractor.js";
 import { CATEGORY_EMOJI, SUBCATEGORY_EMOJI } from "../../src/config/constants.js";
 
@@ -20,6 +26,7 @@ interface MessageEvent {
   text: string;
   channel: string;
   ts: string;
+  thread_ts?: string;
   user?: string;
 }
 
@@ -124,11 +131,59 @@ function buildReplyText(
   return `Saved to Notion -> ${category} ${emoji}${subcategoryText} (confidence: ${confidence.toFixed(2)})`;
 }
 
+/** Process a thread reply by appending to the parent entry (Rule 4: short function) */
+async function processThreadReply(event: MessageEvent): Promise<void> {
+  // Rule 5: Validate input
+  if (!event.ts || !event.channel || !event.text) {
+    throw new Error("processThreadReply: invalid event structure");
+  }
+
+  const threadTs = event.thread_ts;
+  if (!threadTs || typeof threadTs !== "string") {
+    throw new Error("processThreadReply: thread_ts is required");
+  }
+
+  const text = event.text;
+  if (!text.trim()) {
+    return;
+  }
+
+  // Find the parent entry using thread_ts (which is the parent message's ts)
+  const parentEntry = await findEntryBySlackMessageId(threadTs);
+  if (!parentEntry) {
+    console.log(`Thread reply to unknown parent: ${threadTs}, skipping`);
+    return;
+  }
+
+  // Rule 5: Validate returned data
+  if (!parentEntry.pageId) {
+    throw new Error("processThreadReply: parentEntry.pageId is missing");
+  }
+
+  // Append the thread reply content to the parent entry
+  await appendToNotionEntry(parentEntry.pageId, text);
+
+  // Rule 5: Validate environment
+  const token = process.env.SLACK_BOT_TOKEN;
+  if (!token) {
+    throw new Error("SLACK_BOT_TOKEN not configured");
+  }
+
+  // Add reaction to the thread reply
+  await addSlackReaction(token, event.channel, event.ts);
+}
+
 /** Process and classify a Slack message (Rule 4: split from processMessage) */
 async function processMessage(event: MessageEvent): Promise<void> {
   // Rule 5: Validate input
   if (!event.ts || !event.channel || !event.text) {
     throw new Error("processMessage: invalid event structure");
+  }
+
+  // Check if this is a thread reply (thread_ts exists and differs from ts)
+  if (event.thread_ts && event.thread_ts !== event.ts) {
+    await processThreadReply(event);
+    return;
   }
 
   const messageId = event.ts;
@@ -160,6 +215,7 @@ async function processMessage(event: MessageEvent): Promise<void> {
     channelName: channelId,
     timestamp: new Date(parseFloat(messageId) * 1000),
     urls,
+    nextAction: classification.nextAction,
   });
 
   // Rule 5: Validate environment
@@ -237,6 +293,24 @@ export default async function handler(
         )
       );
       return;
+    }
+
+    // Handle reaction_added events to mark entries as Done
+    if (event?.type === "reaction_added") {
+      const reaction = event.reaction as string | undefined;
+      const item = event.item as { ts?: string } | undefined;
+
+      // Mark as done when user adds "done" or "heavy_check_mark" emoji
+      if ((reaction === "done" || reaction === "heavy_check_mark") && item?.ts) {
+        res.status(200).json({ ok: true });
+
+        waitUntil(
+          markEntryAsDone(item.ts).catch((error) =>
+            console.error("Error marking entry as done:", error)
+          )
+        );
+        return;
+      }
     }
   }
 
