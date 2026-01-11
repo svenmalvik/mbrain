@@ -1,101 +1,27 @@
 import { Client } from "@notionhq/client";
 import type { NotionEntry } from "../types/index.js";
+import {
+  DATABASE_PROPERTIES,
+  ensureSchemaProperties,
+  markSchemaValidated,
+} from "./notion-schema.js";
+
+// Rule 5: Validate auth at initialization
+const notionApiKey = process.env.NOTION_API_KEY?.trim();
+if (!notionApiKey) {
+  throw new Error("NOTION_API_KEY environment variable must be set");
+}
 
 const notion = new Client({
-  auth: process.env.NOTION_API_KEY?.trim(),
+  auth: notionApiKey,
   timeoutMs: 30000, // 30 second timeout
 });
 
 let databaseId = process.env.NOTION_DATABASE_ID?.trim();
-let schemaValidated = false;
-
-const DATABASE_PROPERTIES = {
-  Title: { title: {} },
-  Content: { rich_text: {} },
-  Category: {
-    select: {
-      options: [
-        { name: "Projects", color: "red" as const },
-        { name: "Areas", color: "blue" as const },
-        { name: "Resources", color: "green" as const },
-        { name: "Archive", color: "gray" as const },
-        { name: "Inbox", color: "yellow" as const },
-        { name: "Uncategorized", color: "default" as const },
-      ],
-    },
-  },
-  Subcategory: {
-    select: {
-      options: [
-        { name: "Relationships", color: "pink" as const },
-        { name: "Health", color: "green" as const },
-        { name: "Finances", color: "yellow" as const },
-        { name: "Career", color: "purple" as const },
-        { name: "Home", color: "orange" as const },
-      ],
-    },
-  },
-  Confidence: { number: { format: "percent" as const } },
-  "Source Channel": { rich_text: {} },
-  Timestamp: { date: {} },
-  "Slack Message ID": { rich_text: {} },
-  URLs: { rich_text: {} },
-  "Next Action": { rich_text: {} },
-  "Last Reminder": { date: {} },
-  Status: {
-    select: {
-      options: [
-        { name: "Open", color: "yellow" as const },
-        { name: "Done", color: "green" as const },
-      ],
-    },
-  },
-};
-
-/** Ensure database has all required properties (adds if missing) */
-async function ensureSchemaProperties(dbId: string): Promise<void> {
-  if (schemaValidated) {
-    return;
-  }
-
-  try {
-    const db = await notion.databases.retrieve({ database_id: dbId });
-    const properties = db.properties as Record<string, { type: string }>;
-
-    const missingProps: Record<string, unknown> = {};
-
-    if (!properties.Subcategory) {
-      missingProps.Subcategory = DATABASE_PROPERTIES.Subcategory;
-    }
-    if (!properties["Next Action"]) {
-      missingProps["Next Action"] = DATABASE_PROPERTIES["Next Action"];
-    }
-    if (!properties["Last Reminder"]) {
-      missingProps["Last Reminder"] = DATABASE_PROPERTIES["Last Reminder"];
-    }
-    if (!properties.Status) {
-      missingProps.Status = DATABASE_PROPERTIES.Status;
-    }
-
-    if (Object.keys(missingProps).length > 0) {
-      console.log("Adding missing properties to database:", Object.keys(missingProps));
-      await notion.databases.update({
-        database_id: dbId,
-        properties: missingProps as Parameters<typeof notion.databases.update>[0]["properties"],
-      });
-      console.log("Properties added successfully");
-    }
-
-    schemaValidated = true;
-  } catch (error) {
-    console.error("Failed to validate/update database schema:", error);
-    // Continue anyway - the create might still work
-  }
-}
 
 export async function ensureDatabaseExists(): Promise<string> {
   if (databaseId) {
-    await ensureSchemaProperties(databaseId);
+    await ensureSchemaProperties(notion, databaseId);
     return databaseId;
   }
 
@@ -115,7 +41,7 @@ export async function ensureDatabaseExists(): Promise<string> {
   });
 
   databaseId = response.id;
-  schemaValidated = true;
+  markSchemaValidated();
   console.log(`Created Notion database: ${databaseId}`);
   console.log("Please set NOTION_DATABASE_ID environment variable to this ID");
 

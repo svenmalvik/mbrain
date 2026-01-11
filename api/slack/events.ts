@@ -10,6 +10,7 @@ import {
   markEntryAsDone,
 } from "../../src/services/notion.js";
 import { extractUrls } from "../../src/services/url-extractor.js";
+import { addSlackReaction, postSlackReply } from "../../src/services/slack-api.js";
 import { CATEGORY_EMOJI, SUBCATEGORY_EMOJI } from "../../src/config/constants.js";
 
 // Disable body parsing to get raw body for signature verification
@@ -65,57 +66,6 @@ function verifySlackSignature(
     .update(sigBasestring, "utf8")
     .digest("hex")}`;
   return mySignature === slackSignature;
-}
-
-/** Add reaction to Slack message (Rule 7: check response) */
-async function addSlackReaction(
-  token: string,
-  channelId: string,
-  messageId: string
-): Promise<void> {
-  const response = await fetch("https://slack.com/api/reactions.add", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      channel: channelId,
-      timestamp: messageId,
-      name: "white_check_mark",
-    }),
-  });
-
-  // Rule 7: Check return values
-  if (!response.ok) {
-    console.error(`Slack reactions.add failed: ${response.status}`);
-  }
-}
-
-/** Post thread reply to Slack (Rule 7: check response) */
-async function postSlackReply(
-  token: string,
-  channelId: string,
-  messageId: string,
-  text: string
-): Promise<void> {
-  const response = await fetch("https://slack.com/api/chat.postMessage", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      channel: channelId,
-      thread_ts: messageId,
-      text,
-    }),
-  });
-
-  // Rule 7: Check return values
-  if (!response.ok) {
-    console.error(`Slack chat.postMessage failed: ${response.status}`);
-  }
 }
 
 /** Build reply message text */
@@ -206,17 +156,23 @@ async function processMessage(event: MessageEvent): Promise<void> {
 
   const urls = extractUrls(text);
 
-  await createNotionEntry({
+  // Build entry with conditional optional properties (Rule 10: exactOptionalPropertyTypes)
+  const notionEntry: Parameters<typeof createNotionEntry>[0] = {
     content: text,
     category: classification.category,
-    subcategory: classification.subcategory,
     confidence: classification.confidence,
     slackMessageId: messageId,
     channelName: channelId,
     timestamp: new Date(parseFloat(messageId) * 1000),
     urls,
-    nextAction: classification.nextAction,
-  });
+  };
+  if (classification.subcategory) {
+    notionEntry.subcategory = classification.subcategory;
+  }
+  if (classification.nextAction) {
+    notionEntry.nextAction = classification.nextAction;
+  }
+  await createNotionEntry(notionEntry);
 
   // Rule 5: Validate environment
   const token = process.env.SLACK_BOT_TOKEN;

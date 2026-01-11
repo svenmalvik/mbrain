@@ -6,8 +6,12 @@ import {
   DEFAULT_CONFIDENCE_THRESHOLD,
 } from "../config/constants.js";
 
+/** Maximum time for Claude API call (Rule 2: Fixed Loop Bounds) */
+const API_TIMEOUT_MS = 25000;
+
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
+  timeout: API_TIMEOUT_MS,
 });
 
 const model = process.env.CLAUDE_MODEL || DEFAULT_CLAUDE_MODEL;
@@ -75,14 +79,20 @@ export async function classifyMessage(
       finalCategory = "Inbox";
     }
 
-    return {
+    // Build result with conditional optional properties (Rule 10: exactOptionalPropertyTypes)
+    const classificationResult: ClassificationResult = {
       isMeaningful: result.isMeaningful,
       category: finalCategory,
-      subcategory: finalCategory === "Areas" ? result.subcategory ?? undefined : undefined,
       confidence: result.confidence,
       reasoning: result.reasoning,
-      nextAction: result.nextAction ?? undefined,
     };
+    if (finalCategory === "Areas" && result.subcategory) {
+      classificationResult.subcategory = result.subcategory;
+    }
+    if (result.nextAction) {
+      classificationResult.nextAction = result.nextAction;
+    }
+    return classificationResult;
   } catch (error) {
     console.error("Classification failed:", error);
     // Fallback to Uncategorized on any error
