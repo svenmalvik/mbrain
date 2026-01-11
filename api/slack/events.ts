@@ -1,13 +1,15 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { waitUntil } from "@vercel/functions";
 import crypto from "crypto";
-import { classifyMessage } from "../../src/services/claude.js";
+import { classifyMessageWithIntent } from "../../src/services/claude.js";
+import { answerChannelQuestion, answerThreadQuestion } from "../../src/services/qa.js";
 import {
   createNotionEntry,
   isDuplicate,
   findEntryBySlackMessageId,
   appendToNotionEntry,
   markEntryAsDone,
+  markEntryAsOpen,
 } from "../../src/services/notion.js";
 import { extractUrls } from "../../src/services/url-extractor.js";
 import { addSlackReaction, postSlackReply } from "../../src/services/slack-api.js";
@@ -81,7 +83,7 @@ function buildReplyText(
   return `Saved to Notion -> ${category} ${emoji}${subcategoryText} (confidence: ${confidence.toFixed(2)})`;
 }
 
-/** Process a thread reply by appending to the parent entry (Rule 4: short function) */
+/** Process a thread reply - handles questions vs notes (Rule 4: short function) */
 async function processThreadReply(event: MessageEvent): Promise<void> {
   // Rule 5: Validate input
   if (!event.ts || !event.channel || !event.text) {
@@ -93,12 +95,33 @@ async function processThreadReply(event: MessageEvent): Promise<void> {
     throw new Error("processThreadReply: thread_ts is required");
   }
 
-  const text = event.text;
-  if (!text.trim()) {
+  const text = event.text.trim();
+  if (!text) {
     return;
   }
 
-  // Find the parent entry using thread_ts (which is the parent message's ts)
+  // Rule 5: Validate environment
+  const token = process.env.SLACK_BOT_TOKEN;
+  if (!token) {
+    throw new Error("SLACK_BOT_TOKEN not configured");
+  }
+
+  // Classify intent first
+  const classification = await classifyMessageWithIntent(text);
+
+  // Handle questions in threads - answer based on parent note only
+  if (classification.intent === "question") {
+    const answer = await answerThreadQuestion(text, threadTs);
+    await postSlackReply(token, event.channel, event.ts, answer);
+    return;
+  }
+
+  // Handle noise - ignore silently
+  if (classification.intent === "noise" || !classification.isMeaningful) {
+    return;
+  }
+
+  // For notes: append to parent entry
   const parentEntry = await findEntryBySlackMessageId(threadTs);
   if (!parentEntry) {
     console.log(`Thread reply to unknown parent: ${threadTs}, skipping`);
@@ -112,12 +135,6 @@ async function processThreadReply(event: MessageEvent): Promise<void> {
 
   // Append the thread reply content to the parent entry
   await appendToNotionEntry(parentEntry.pageId, text);
-
-  // Rule 5: Validate environment
-  const token = process.env.SLACK_BOT_TOKEN;
-  if (!token) {
-    throw new Error("SLACK_BOT_TOKEN not configured");
-  }
 
   // Add reaction to the thread reply
   await addSlackReaction(token, event.channel, event.ts);
@@ -138,23 +155,44 @@ async function processMessage(event: MessageEvent): Promise<void> {
 
   const messageId = event.ts;
   const channelId = event.channel;
-  const text = event.text;
+  const text = event.text.trim();
 
-  if (!text.trim()) {
+  if (!text) {
     return;
   }
 
+  // Rule 5: Validate environment
+  const token = process.env.SLACK_BOT_TOKEN;
+  if (!token) {
+    throw new Error("SLACK_BOT_TOKEN not configured");
+  }
+
+  // Use intent-aware classification
+  const classification = await classifyMessageWithIntent(text);
+
+  // Handle questions in channel - search all notes
+  if (classification.intent === "question") {
+    const answer = await answerChannelQuestion(text);
+    await postSlackReply(token, channelId, messageId, answer);
+    return;
+  }
+
+  // Handle noise - ignore silently
+  if (classification.intent === "noise" || !classification.isMeaningful) {
+    return;
+  }
+
+  // For notes: check duplicate and save
   if (await isDuplicate(messageId)) {
     return;
   }
 
-  const classification = await classifyMessage(text);
-
-  if (!classification.isMeaningful) {
-    return;
-  }
-
   const urls = extractUrls(text);
+
+  // Rule 5: Validate category exists for notes
+  if (!classification.category) {
+    throw new Error("processMessage: category required for note intent");
+  }
 
   // Build entry with conditional optional properties (Rule 10: exactOptionalPropertyTypes)
   const notionEntry: Parameters<typeof createNotionEntry>[0] = {
@@ -173,12 +211,6 @@ async function processMessage(event: MessageEvent): Promise<void> {
     notionEntry.nextAction = classification.nextAction;
   }
   await createNotionEntry(notionEntry);
-
-  // Rule 5: Validate environment
-  const token = process.env.SLACK_BOT_TOKEN;
-  if (!token) {
-    throw new Error("SLACK_BOT_TOKEN not configured");
-  }
 
   await addSlackReaction(token, channelId, messageId);
 
@@ -256,13 +288,31 @@ export default async function handler(
       const reaction = event.reaction as string | undefined;
       const item = event.item as { ts?: string } | undefined;
 
-      // Mark as done when user adds "done" or "heavy_check_mark" emoji
-      if ((reaction === "done" || reaction === "heavy_check_mark") && item?.ts) {
+      // Mark as done when user adds white_check_mark emoji
+      if (reaction === "white_check_mark" && item?.ts) {
         res.status(200).json({ ok: true });
 
         waitUntil(
           markEntryAsDone(item.ts).catch((error) =>
             console.error("Error marking entry as done:", error)
+          )
+        );
+        return;
+      }
+    }
+
+    // Handle reaction_removed events to mark entries as Open
+    if (event?.type === "reaction_removed") {
+      const reaction = event.reaction as string | undefined;
+      const item = event.item as { ts?: string } | undefined;
+
+      // Mark as open when user removes white_check_mark emoji
+      if (reaction === "white_check_mark" && item?.ts) {
+        res.status(200).json({ ok: true });
+
+        waitUntil(
+          markEntryAsOpen(item.ts).catch((error) =>
+            console.error("Error marking entry as open:", error)
           )
         );
         return;

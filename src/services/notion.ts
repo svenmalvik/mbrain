@@ -1,5 +1,5 @@
 import { Client } from "@notionhq/client";
-import type { NotionEntry } from "../types/index.js";
+import type { NotionEntry, SearchResult, PARACategory } from "../types/index.js";
 import {
   DATABASE_PROPERTIES,
   ensureSchemaProperties,
@@ -248,4 +248,151 @@ export async function markEntryAsDone(slackMessageId: string): Promise<boolean> 
   });
 
   return true;
+}
+
+/** Mark an entry as Open by its Slack Message ID (Rule 4: short function) */
+export async function markEntryAsOpen(slackMessageId: string): Promise<boolean> {
+  // Rule 5: Runtime assertions - validate input
+  if (!slackMessageId || typeof slackMessageId !== "string") {
+    throw new Error("markEntryAsOpen: slackMessageId must be a non-empty string");
+  }
+
+  const entry = await findEntryBySlackMessageId(slackMessageId);
+  if (!entry) {
+    return false;
+  }
+
+  await notion.pages.update({
+    page_id: entry.pageId,
+    properties: {
+      Status: {
+        select: { name: "Open" },
+      },
+    },
+  });
+
+  return true;
+}
+
+/** Maximum search results to return */
+const MAX_SEARCH_RESULTS = 50;
+
+/** Search notes by text content using Notion search API */
+export async function searchNotes(
+  query: string,
+  limit: number = 10
+): Promise<SearchResult[]> {
+  // Rule 5: Runtime assertions - validate input
+  if (!query || typeof query !== "string") {
+    throw new Error("searchNotes: query must be a non-empty string");
+  }
+  if (limit < 1 || limit > MAX_SEARCH_RESULTS) {
+    throw new Error(`searchNotes: limit must be between 1 and ${MAX_SEARCH_RESULTS}`);
+  }
+
+  const dbId = await ensureDatabaseExists();
+
+  // Use Notion search API
+  const response = await notion.search({
+    query: query,
+    filter: {
+      property: "object",
+      value: "page",
+    },
+    page_size: limit * 2, // Fetch more to filter by database
+  });
+
+  const results: SearchResult[] = [];
+
+  // Rule 2: Fixed loop bounds
+  const maxIterations = Math.min(response.results.length, limit * 2);
+  for (let i = 0; i < maxIterations && results.length < limit; i++) {
+    const page = response.results[i];
+    if (!page || page.object !== "page") continue;
+
+    // Filter to only pages from our database
+    const pageWithParent = page as {
+      parent?: { type?: string; database_id?: string };
+      properties: Record<string, unknown>;
+      id: string;
+    };
+
+    if (pageWithParent.parent?.type !== "database_id") continue;
+    if (pageWithParent.parent.database_id !== dbId) continue;
+
+    const props = pageWithParent.properties;
+
+    // Extract properties with type safety
+    const titleProp = props.Title as { title?: Array<{ plain_text?: string }> };
+    const contentProp = props.Content as { rich_text?: Array<{ plain_text?: string }> };
+    const categoryProp = props.Category as { select?: { name?: string } };
+    const slackIdProp = props["Slack Message ID"] as { rich_text?: Array<{ plain_text?: string }> };
+
+    const title = titleProp?.title?.[0]?.plain_text ?? "";
+    const content = contentProp?.rich_text?.[0]?.plain_text ?? "";
+    const category = (categoryProp?.select?.name ?? "Uncategorized") as PARACategory;
+    const slackMessageId = slackIdProp?.rich_text?.[0]?.plain_text ?? "";
+
+    results.push({
+      pageId: page.id,
+      title,
+      content,
+      category,
+      slackMessageId,
+    });
+  }
+
+  return results;
+}
+
+/** Get full entry content by Slack message ID as SearchResult */
+export async function getEntryContent(
+  slackMessageId: string
+): Promise<SearchResult | null> {
+  // Rule 5: Runtime assertions - validate input
+  if (!slackMessageId || typeof slackMessageId !== "string") {
+    throw new Error("getEntryContent: slackMessageId must be a non-empty string");
+  }
+
+  const dbId = await ensureDatabaseExists();
+
+  const response = await notion.databases.query({
+    database_id: dbId,
+    filter: {
+      property: "Slack Message ID",
+      rich_text: {
+        equals: slackMessageId,
+      },
+    },
+    page_size: 1,
+  });
+
+  const page = response.results[0];
+  if (!page) {
+    return null;
+  }
+
+  // Rule 5: Validate returned data
+  if (!page.id) {
+    throw new Error("getEntryContent: page.id is missing from Notion response");
+  }
+
+  const properties = (page as { properties: Record<string, unknown> }).properties;
+
+  // Extract properties with type safety
+  const titleProp = properties.Title as { title?: Array<{ plain_text?: string }> };
+  const contentProp = properties.Content as { rich_text?: Array<{ plain_text?: string }> };
+  const categoryProp = properties.Category as { select?: { name?: string } };
+
+  const title = titleProp?.title?.[0]?.plain_text ?? "";
+  const content = contentProp?.rich_text?.[0]?.plain_text ?? "";
+  const category = (categoryProp?.select?.name ?? "Uncategorized") as PARACategory;
+
+  return {
+    pageId: page.id,
+    title,
+    content,
+    category,
+    slackMessageId,
+  };
 }
