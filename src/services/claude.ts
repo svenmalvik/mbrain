@@ -20,15 +20,42 @@ import {
 /** Maximum time for Claude API call (Rule 2: Fixed Loop Bounds) */
 const API_TIMEOUT_MS = 25000;
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY!,
-  timeout: API_TIMEOUT_MS,
-});
+// Lazy initialization for Anthropic client (Rule 5: validate at first use, not module load)
+let _anthropic: Anthropic | null = null;
 
-const model = process.env.CLAUDE_MODEL || DEFAULT_CLAUDE_MODEL;
-const confidenceThreshold = parseFloat(
-  process.env.CONFIDENCE_THRESHOLD || String(DEFAULT_CONFIDENCE_THRESHOLD)
-);
+function getAnthropicClient(): Anthropic {
+  if (!_anthropic) {
+    const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
+    if (!apiKey) {
+      throw new Error("ANTHROPIC_API_KEY environment variable is required");
+    }
+    _anthropic = new Anthropic({
+      apiKey,
+      timeout: API_TIMEOUT_MS,
+    });
+  }
+  return _anthropic;
+}
+
+function getModel(): string {
+  return process.env.CLAUDE_MODEL?.trim() || DEFAULT_CLAUDE_MODEL;
+}
+
+// Rule 5: Validate CONFIDENCE_THRESHOLD is a valid number, fallback to default if NaN
+function getConfidenceThreshold(): number {
+  const parsedThreshold = parseFloat(process.env.CONFIDENCE_THRESHOLD || "");
+  return isNaN(parsedThreshold) ? DEFAULT_CONFIDENCE_THRESHOLD : parsedThreshold;
+}
+
+/** Strip markdown code block wrapper from JSON response if present */
+function extractJsonFromResponse(text: string): string {
+  // Handle ```json ... ``` or ``` ... ``` wrapped responses
+  const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (codeBlockMatch?.[1]) {
+    return codeBlockMatch[1].trim();
+  }
+  return text.trim();
+}
 
 interface ClaudeResponse {
   isMeaningful: boolean;
@@ -58,8 +85,8 @@ export async function classifyMessage(
   }
 
   try {
-    const response = await anthropic.messages.create({
-      model,
+    const response = await getAnthropicClient().messages.create({
+      model: getModel(),
       max_tokens: 256,
       system: CLASSIFICATION_PROMPT,
       messages: [
@@ -84,7 +111,7 @@ export async function classifyMessage(
     // Parse JSON response with specific error handling
     let result: ClaudeResponse;
     try {
-      result = JSON.parse(content.text) as ClaudeResponse;
+      result = JSON.parse(extractJsonFromResponse(content.text)) as ClaudeResponse;
     } catch {
       throw new Error(`Invalid JSON in Claude response: ${content.text.slice(0, 100)}`);
     }
@@ -94,9 +121,12 @@ export async function classifyMessage(
       throw new Error("Invalid classification response structure");
     }
 
+    // Rule 5: Normalize confidence to valid 0-1 range
+    const normalizedConfidence = Math.max(0, Math.min(1, result.confidence));
+
     // Apply confidence threshold - downgrade to Inbox if low confidence
     let finalCategory: PARACategory = result.category || "Uncategorized";
-    if (result.isMeaningful && result.confidence < confidenceThreshold) {
+    if (result.isMeaningful && normalizedConfidence < getConfidenceThreshold()) {
       finalCategory = "Inbox";
     }
 
@@ -104,7 +134,7 @@ export async function classifyMessage(
     const classificationResult: ClassificationResult = {
       isMeaningful: result.isMeaningful,
       category: finalCategory,
-      confidence: result.confidence,
+      confidence: normalizedConfidence,
       reasoning: result.reasoning,
     };
     if (finalCategory === "Areas" && result.subcategory) {
@@ -136,8 +166,8 @@ export async function classifyMessageWithIntent(
   }
 
   try {
-    const response = await anthropic.messages.create({
-      model,
+    const response = await getAnthropicClient().messages.create({
+      model: getModel(),
       max_tokens: 256,
       system: MESSAGE_CLASSIFICATION_PROMPT,
       messages: [
@@ -161,7 +191,7 @@ export async function classifyMessageWithIntent(
     // Parse JSON response
     let result: ClaudeIntentResponse;
     try {
-      result = JSON.parse(content.text) as ClaudeIntentResponse;
+      result = JSON.parse(extractJsonFromResponse(content.text)) as ClaudeIntentResponse;
     } catch {
       throw new Error(`Invalid JSON in Claude response: ${content.text.slice(0, 100)}`);
     }
@@ -191,9 +221,12 @@ export async function classifyMessageWithIntent(
       };
     }
 
+    // Rule 5: Normalize confidence to valid 0-1 range
+    const normalizedConfidence = Math.max(0, Math.min(1, result.confidence ?? 0));
+
     // For notes, apply existing classification logic
     let finalCategory: PARACategory = result.category || "Uncategorized";
-    if (result.confidence < confidenceThreshold) {
+    if (normalizedConfidence < getConfidenceThreshold()) {
       finalCategory = "Inbox";
     }
 
@@ -201,7 +234,7 @@ export async function classifyMessageWithIntent(
       intent: "note",
       isMeaningful: true,
       category: finalCategory,
-      confidence: result.confidence,
+      confidence: normalizedConfidence,
       reasoning: result.reasoning,
     };
 
@@ -261,8 +294,8 @@ export async function generateAnswer(
   const systemPrompt = ANSWER_GENERATION_PROMPT.replace("{notes}", notesContext);
 
   try {
-    const response = await anthropic.messages.create({
-      model,
+    const response = await getAnthropicClient().messages.create({
+      model: getModel(),
       max_tokens: ANSWER_MAX_TOKENS,
       system: systemPrompt,
       messages: [

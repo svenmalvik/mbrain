@@ -38,8 +38,15 @@ async function postSlackReminder(
     return false;
   }
 
-  const data = (await response.json()) as { ok: boolean };
-  return data.ok;
+  // Rule 7: Wrap JSON parsing in try/catch for robustness
+  let data: { ok?: boolean };
+  try {
+    data = await response.json();
+  } catch {
+    console.error("postSlackReminder: Failed to parse JSON response");
+    return false;
+  }
+  return data.ok === true;
 }
 
 /** Hourly cron job to send action reminders */
@@ -71,18 +78,24 @@ export default async function handler(
     let remindersSent = 0;
 
     for (const action of actionsToProcess) {
-      const reminderText = `Reminder: ${action.nextAction}`;
+      // Rule 7: Wrap each iteration to prevent partial failures
+      try {
+        const reminderText = `Reminder: ${action.nextAction}`;
 
-      const success = await postSlackReminder(
-        token,
-        action.channelId,
-        action.slackMessageId,
-        reminderText
-      );
+        const success = await postSlackReminder(
+          token,
+          action.channelId,
+          action.slackMessageId,
+          reminderText
+        );
 
-      if (success) {
-        await updateLastReminder(action.pageId);
-        remindersSent++;
+        if (success) {
+          await updateLastReminder(action.pageId);
+          remindersSent++;
+        }
+      } catch (error) {
+        console.error(`Failed to process reminder for ${action.pageId}:`, error);
+        // Continue with next action instead of failing entire batch
       }
     }
 

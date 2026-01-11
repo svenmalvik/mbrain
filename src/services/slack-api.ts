@@ -1,11 +1,11 @@
 /** Slack API helper functions (Rule 4: extracted for shorter files) */
 
-/** Add reaction to Slack message (Rule 7: check response) */
+/** Add reaction to Slack message (Rule 7: check response, return success status) */
 export async function addSlackReaction(
   token: string,
   channelId: string,
   messageId: string
-): Promise<void> {
+): Promise<boolean> {
   // Rule 5: Runtime assertions - validate input
   if (!token || typeof token !== "string") {
     throw new Error("addSlackReaction: token must be a non-empty string");
@@ -30,10 +30,12 @@ export async function addSlackReaction(
     }),
   });
 
-  // Rule 7: Check return values
+  // Rule 7: Check return values and propagate status
   if (!response.ok) {
     console.error(`Slack reactions.add failed: ${response.status}`);
+    return false;
   }
+  return true;
 }
 
 /** Timeout for Slack API calls (Rule 2: Fixed bounds) */
@@ -78,7 +80,14 @@ export async function fetchSlackMessage(
       return null;
     }
 
-    const data = await response.json();
+    // Rule 7: Wrap JSON parsing in try/catch for robustness
+    let data: { ok?: boolean; messages?: Array<{ text?: string }> };
+    try {
+      data = await response.json();
+    } catch {
+      console.error("fetchSlackMessage: Failed to parse JSON response");
+      return null;
+    }
 
     // Rule 7 & 9: Explicit validation, limit indirection
     if (!data.ok) {
@@ -96,13 +105,13 @@ export async function fetchSlackMessage(
   }
 }
 
-/** Post thread reply to Slack (Rule 7: check response) */
+/** Post thread reply to Slack (Rule 7: check response, return success status) */
 export async function postSlackReply(
   token: string,
   channelId: string,
   messageId: string,
   text: string
-): Promise<void> {
+): Promise<boolean> {
   // Rule 5: Runtime assertions - validate input
   if (!token || typeof token !== "string") {
     throw new Error("postSlackReply: token must be a non-empty string");
@@ -130,8 +139,10 @@ export async function postSlackReply(
     }),
   });
 
-  // Rule 7: Check return values
+  // Rule 7: Check return values and propagate status
   if (!response.ok) {
     console.error(`Slack chat.postMessage failed: ${response.status}`);
+    return false;
   }
+  return true;
 }

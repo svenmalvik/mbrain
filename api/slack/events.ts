@@ -26,6 +26,9 @@ export const config = {
 /** Maximum time to wait for request body (Rule 2: Fixed Loop Bounds) */
 const BODY_READ_TIMEOUT_MS = 5000;
 
+/** Maximum message length to process (Rule 2: Fixed bounds for Claude API) */
+const MAX_MESSAGE_LENGTH = 4000;
+
 interface MessageEvent {
   text: string;
   channel: string;
@@ -269,7 +272,8 @@ async function processMessage(event: MessageEvent): Promise<void> {
 
   const messageId = event.ts;
   const channelId = event.channel;
-  const text = event.text.trim();
+  // Rule 2: Limit message length to prevent API overflows
+  const text = event.text.trim().slice(0, MAX_MESSAGE_LENGTH);
 
   if (!text) {
     return;
@@ -372,9 +376,11 @@ export default async function handler(
     return;
   }
 
+  // Rule 5: Validate timestamp is numeric before parsing (prevents NaN bypass)
   const currentTime = Math.floor(Date.now() / 1000);
-  if (Math.abs(currentTime - parseInt(timestamp)) > 60 * 5) {
-    res.status(401).json({ error: "Request timestamp too old" });
+  const parsedTimestamp = parseInt(timestamp, 10);
+  if (isNaN(parsedTimestamp) || Math.abs(currentTime - parsedTimestamp) > 60 * 5) {
+    res.status(401).json({ error: "Invalid or expired timestamp" });
     return;
   }
 

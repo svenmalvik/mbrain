@@ -18,6 +18,8 @@ export function extractUrls(text: string): string[] {
   const slackLinkRegex = /<(https?:\/\/[^|>]+)(?:\|[^>]*)?>/g;
   let match;
   while ((match = slackLinkRegex.exec(text)) !== null && iterations < MAX_URL_MATCHES) {
+    // Rule 2: Guard against empty matches causing infinite loops
+    if (!match[0]) break;
     // Rule 7: Check indexed access with noUncheckedIndexedAccess
     const url = match[1];
     if (url) {
@@ -29,6 +31,8 @@ export function extractUrls(text: string): string[] {
   // Match plain URLs (not already captured in Slack format)
   const plainUrlRegex = /(?<![<|])https?:\/\/[^\s<>]+/g;
   while ((match = plainUrlRegex.exec(text)) !== null && iterations < MAX_URL_MATCHES) {
+    // Rule 2: Guard against empty matches causing infinite loops
+    if (!match[0]) break;
     if (!urls.includes(match[0])) {
       urls.push(match[0]);
     }
