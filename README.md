@@ -4,12 +4,15 @@ A personal knowledge management system ("Second Brain") that captures fleeting t
 
 ## Features
 
-- **AI-Powered Classification**: Uses Claude to automatically categorize messages into PARA categories (Projects, Areas, Resources, Archive)
+- **AI-Powered Classification**: Uses Claude to classify messages by intent (note, question, noise) and PARA category
+- **Q&A System**: Ask questions in the channel and get AI-generated answers from your knowledge base
 - **Slack Integration**: Capture thoughts by posting to a dedicated Slack channel
 - **Notion Storage**: Structured database with full metadata, URLs, and actionable items
+- **Emoji Status Control**: React with ✅ to mark done, ❌ to archive (reversible by removing reactions)
 - **Confidence Scoring**: Low-confidence classifications go to Inbox for manual review
-- **Thread Support**: Reply threads are automatically appended to parent entries
-- **Daily Reminders**: Automated reminders for pending actions
+- **Thread Support**: Reply threads are appended to parent entries; thread questions answer from parent context
+- **Hourly Reminders**: Automated reminders for pending actions
+- **URL Detection**: Extracts and indexes URLs; ask "what links..." to find URL-containing notes
 - **Duplicate Detection**: Prevents processing the same message twice
 
 ## Architecture
@@ -19,13 +22,18 @@ Slack #brain channel
        ↓
 api/slack/events.ts (Vercel serverless)
        ↓ signature verification, duplicate check
-src/services/claude.ts → classifyMessage()
-       ↓ returns PARACategory + confidence
-src/services/notion.ts → createNotionEntry()
+src/services/claude.ts → classifyMessageWithIntent()
+       ↓ returns intent + PARACategory + confidence
+       ├─→ intent=question → qa.ts → searchNotes() → AI answer
+       ├─→ intent=note → notion.ts → createNotionEntry()
+       └─→ intent=noise → (silently dropped)
        ↓
 Notion database (structured PARA storage)
        ↓
 Slack reaction (✅) + thread reply with category
+
+Emoji reactions (✅, ❌) → Status changes in Notion
+Hourly cron → Reminder notifications for pending actions
 ```
 
 ## Tech Stack
@@ -68,6 +76,7 @@ cp .env.example .env.local
 3. Subscribe to bot events:
    - `message.channels`
    - `reaction_added`
+   - `reaction_removed`
 4. Add **Bot Token Scopes**:
    - `channels:history`
    - `channels:read`
@@ -96,11 +105,13 @@ cp .env.example .env.local
 | `NOTION_PARENT_PAGE_ID` | No | Parent page for auto-created database |
 | `CLAUDE_MODEL` | No | Model ID (default: claude-sonnet-4-20250514) |
 | `CONFIDENCE_THRESHOLD` | No | Below this, use Inbox (default: 0.7) |
+| `CRON_SECRET` | No | Vercel cron authentication secret |
 
 ## Usage
 
+### Capturing Notes
 1. Post a thought or idea to your Slack `#brain` channel
-2. The bot processes and classifies it using Claude
+2. The bot classifies it by intent and PARA category
 3. A Notion entry is created with:
    - Auto-generated title
    - Full message content
@@ -108,7 +119,21 @@ cp .env.example .env.local
    - Extracted URLs
    - Suggested next action (if applicable)
 4. The bot reacts with ✅ and replies with the classification
-5. React with ✅ or 🔔 to mark items as done
+
+### Asking Questions
+- Post a question to the channel (e.g., "What did I save about React?")
+- The bot searches your Open notes and synthesizes an answer
+- Ask about URLs with "what links..." or "any URLs about..."
+- Thread replies with questions use only the parent note's context
+
+### Managing Status with Reactions
+
+| Action | Result |
+|--------|--------|
+| Add ✅ | Marks entry as Done |
+| Remove ✅ | Reopens entry (status → Open) |
+| Add ❌ | Archives/deletes entry |
+| Remove ❌ | Restores entry from Slack message |
 
 ## PARA Categories
 
@@ -164,20 +189,22 @@ vercel logs --follow
 mbrain/
 ├── api/
 │   ├── slack/
-│   │   └── events.ts      # Slack webhook handler
+│   │   └── events.ts        # Slack webhook handler (messages, reactions)
 │   └── cron/
-│       └── hourly.ts      # Daily reminder job
+│       └── hourly.ts        # Hourly reminder job
 ├── src/
 │   ├── config/
-│   │   ├── constants.ts   # Emojis and defaults
-│   │   └── prompts.ts     # Claude system prompt
+│   │   ├── constants.ts     # Emojis and defaults
+│   │   └── prompts.ts       # Claude system prompts
 │   ├── services/
-│   │   ├── claude.ts      # AI classification
-│   │   ├── notion.ts      # Notion operations
-│   │   ├── reminder.ts    # Pending action reminders
-│   │   └── slack-api.ts   # Slack helpers
+│   │   ├── claude.ts        # AI classification (intent + PARA)
+│   │   ├── notion.ts        # Notion CRUD operations
+│   │   ├── qa.ts            # Q&A answer generation
+│   │   ├── reminder.ts      # Pending action reminders
+│   │   ├── slack-api.ts     # Slack API helpers
+│   │   └── url-extractor.ts # URL detection from messages
 │   └── types/
-│       └── index.ts       # TypeScript definitions
+│       └── index.ts         # TypeScript definitions
 ├── vercel.json
 └── tsconfig.json
 ```
