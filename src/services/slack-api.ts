@@ -26,13 +26,73 @@ export async function addSlackReaction(
     body: JSON.stringify({
       channel: channelId,
       timestamp: messageId,
-      name: "white_check_mark",
+      name: "heavy_check_mark",
     }),
   });
 
   // Rule 7: Check return values
   if (!response.ok) {
     console.error(`Slack reactions.add failed: ${response.status}`);
+  }
+}
+
+/** Timeout for Slack API calls (Rule 2: Fixed bounds) */
+const SLACK_API_TIMEOUT_MS = 10000;
+
+/** Fetch a Slack message by timestamp (Rule 7: check response) */
+export async function fetchSlackMessage(
+  token: string,
+  channelId: string,
+  messageTs: string
+): Promise<string | null> {
+  // Rule 5: Runtime assertions - validate input
+  if (!token || typeof token !== "string") {
+    throw new Error("fetchSlackMessage: token must be a non-empty string");
+  }
+  if (!channelId || typeof channelId !== "string") {
+    throw new Error("fetchSlackMessage: channelId must be a non-empty string");
+  }
+  if (!messageTs || typeof messageTs !== "string") {
+    throw new Error("fetchSlackMessage: messageTs must be a non-empty string");
+  }
+
+  // Rule 2: Fixed timeout bound
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), SLACK_API_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(
+      `https://slack.com/api/conversations.history?channel=${channelId}&latest=${messageTs}&limit=1&inclusive=true`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        signal: controller.signal,
+      }
+    );
+
+    // Rule 7: Check return values
+    if (!response.ok) {
+      console.error(`Slack conversations.history failed: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json();
+
+    // Rule 7 & 9: Explicit validation, limit indirection
+    if (!data.ok) {
+      return null;
+    }
+    const messages = data.messages as Array<{ text?: string }> | undefined;
+    const firstMessage = messages?.[0];
+    if (!firstMessage?.text) {
+      return null;
+    }
+
+    return firstMessage.text;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

@@ -10,9 +10,10 @@ import {
   appendToNotionEntry,
   markEntryAsDone,
   markEntryAsOpen,
+  deleteEntry,
 } from "../../src/services/notion.js";
 import { extractUrls } from "../../src/services/url-extractor.js";
-import { addSlackReaction, postSlackReply } from "../../src/services/slack-api.js";
+import { addSlackReaction, postSlackReply, fetchSlackMessage } from "../../src/services/slack-api.js";
 import { CATEGORY_EMOJI, SUBCATEGORY_EMOJI } from "../../src/config/constants.js";
 
 // Disable body parsing to get raw body for signature verification
@@ -81,6 +82,50 @@ function buildReplyText(
     ? ` -> ${subcategory} ${SUBCATEGORY_EMOJI[subcategory as keyof typeof SUBCATEGORY_EMOJI]}`
     : "";
   return `Saved to Notion -> ${category} ${emoji}${subcategoryText} (confidence: ${confidence.toFixed(2)})`;
+}
+
+/** Re-create a Notion entry from a Slack message (Rule 4: extracted function) */
+async function restoreEntryFromSlack(
+  token: string,
+  channel: string,
+  messageTs: string
+): Promise<void> {
+  // Rule 5: Validate input
+  if (!token || !channel || !messageTs) {
+    throw new Error("restoreEntryFromSlack: missing required parameters");
+  }
+
+  // Fetch original message from Slack
+  const text = await fetchSlackMessage(token, channel, messageTs);
+  if (!text) {
+    return;
+  }
+
+  // Classify and create entry
+  const classification = await classifyMessageWithIntent(text);
+  if (classification.intent !== "note" || !classification.isMeaningful || !classification.category) {
+    return;
+  }
+
+  const urls = extractUrls(text);
+  const notionEntry: Parameters<typeof createNotionEntry>[0] = {
+    content: text,
+    category: classification.category,
+    confidence: classification.confidence,
+    slackMessageId: messageTs,
+    channelName: channel,
+    timestamp: new Date(parseFloat(messageTs) * 1000),
+    urls,
+  };
+  if (classification.subcategory) {
+    notionEntry.subcategory = classification.subcategory;
+  }
+  if (classification.nextAction) {
+    notionEntry.nextAction = classification.nextAction;
+  }
+  await createNotionEntry(notionEntry);
+
+  await postSlackReply(token, channel, messageTs, "♻️ Note restored in Notion");
 }
 
 /** Process a thread reply - handles questions vs notes (Rule 4: short function) */
@@ -283,7 +328,7 @@ export default async function handler(
       return;
     }
 
-    // Handle reaction_added events to mark entries as Done
+    // Handle reaction_added events
     if (event?.type === "reaction_added") {
       const reaction = event.reaction as string | undefined;
       const item = event.item as { ts?: string } | undefined;
@@ -299,9 +344,28 @@ export default async function handler(
         );
         return;
       }
+
+      // Delete entry when user adds x emoji
+      if (reaction === "x" && item?.ts) {
+        const messageTs = item.ts;
+        const channel = (event.item as { channel?: string })?.channel;
+        const token = process.env.SLACK_BOT_TOKEN;
+
+        res.status(200).json({ ok: true });
+
+        waitUntil(
+          (async () => {
+            const deleted = await deleteEntry(messageTs);
+            if (deleted && token && channel) {
+              await postSlackReply(token, channel, messageTs, "🗑️ Note deleted from Notion");
+            }
+          })().catch((error) => console.error("Error deleting entry:", error))
+        );
+        return;
+      }
     }
 
-    // Handle reaction_removed events to mark entries as Open
+    // Handle reaction_removed events
     if (event?.type === "reaction_removed") {
       const reaction = event.reaction as string | undefined;
       const item = event.item as { ts?: string } | undefined;
@@ -313,6 +377,27 @@ export default async function handler(
         waitUntil(
           markEntryAsOpen(item.ts).catch((error) =>
             console.error("Error marking entry as open:", error)
+          )
+        );
+        return;
+      }
+
+      // Re-create entry when user removes x emoji
+      if (reaction === "x" && item?.ts) {
+        const messageTs = item.ts;
+        const channel = (event.item as { channel?: string })?.channel;
+        const token = process.env.SLACK_BOT_TOKEN;
+
+        if (!token || !channel) {
+          res.status(200).json({ ok: true });
+          return;
+        }
+
+        res.status(200).json({ ok: true });
+
+        waitUntil(
+          restoreEntryFromSlack(token, channel, messageTs).catch((error) =>
+            console.error("Error restoring entry:", error)
           )
         );
         return;

@@ -274,6 +274,26 @@ export async function markEntryAsOpen(slackMessageId: string): Promise<boolean> 
   return true;
 }
 
+/** Delete (archive) an entry by its Slack Message ID (Rule 4: short function) */
+export async function deleteEntry(slackMessageId: string): Promise<boolean> {
+  // Rule 5: Runtime assertions - validate input
+  if (!slackMessageId || typeof slackMessageId !== "string") {
+    throw new Error("deleteEntry: slackMessageId must be a non-empty string");
+  }
+
+  const entry = await findEntryBySlackMessageId(slackMessageId);
+  if (!entry) {
+    return false;
+  }
+
+  await notion.pages.update({
+    page_id: entry.pageId,
+    archived: true,
+  });
+
+  return true;
+}
+
 /** Maximum search results to return */
 const MAX_SEARCH_RESULTS = 50;
 
