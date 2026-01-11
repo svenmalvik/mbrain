@@ -1,0 +1,23 @@
+{
+  "name": "mbrain-slack-notion",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src api"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.0",
+    "@notionhq/client": "^2.2.0",
+    "@slack/bolt": "^3.21.0",
+    "@vercel/functions": "^3.3.5",
+    "micro": "^10.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@vercel/node": "^3.0.0",
+    "typescript": "^5.0.0"
+  }
+}
