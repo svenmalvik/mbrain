@@ -247,9 +247,15 @@ export async function generateAnswer(
     return "I don't have any notes that seem relevant to your question.";
   }
 
-  // Build notes context string with status
+  // Build notes context string with status and URLs
   const notesContext = notes
-    .map((note, i) => `Note ${i + 1} (${note.category}, Status: ${note.status}):\n${note.content}`)
+    .map((note, i) => {
+      let context = `Note ${i + 1} (${note.category}, Status: ${note.status}):\n${note.content}`;
+      if (note.urls) {
+        context += `\nURLs: ${note.urls}`;
+      }
+      return context;
+    })
     .join("\n\n---\n\n");
 
   const systemPrompt = ANSWER_GENERATION_PROMPT.replace("{notes}", notesContext);

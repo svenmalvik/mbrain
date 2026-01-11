@@ -1,14 +1,35 @@
 import { generateAnswer } from "./claude.js";
-import { searchNotes, getEntryContent } from "./notion.js";
+import { searchNotes, getEntryContent, getNotesWithUrls } from "./notion.js";
 
 /** Maximum notes to include in answer context */
 const MAX_CONTEXT_NOTES = 5;
+
+/** Keywords that indicate a question about URLs/links */
+const URL_KEYWORDS = ["link", "links", "url", "urls", "website", "websites"];
+
+/** Check if question is asking about URLs/links */
+function isUrlQuestion(question: string): boolean {
+  const lowerQuestion = question.toLowerCase();
+  return URL_KEYWORDS.some((keyword) => lowerQuestion.includes(keyword));
+}
 
 /** Answer a question using all notes (channel question) */
 export async function answerChannelQuestion(question: string): Promise<string> {
   // Rule 5: Runtime assertions
   if (!question || typeof question !== "string") {
     throw new Error("answerChannelQuestion: question must be a non-empty string");
+  }
+
+  // Check if this is a question about URLs/links
+  if (isUrlQuestion(question)) {
+    const notesWithUrls = await getNotesWithUrls();
+
+    if (notesWithUrls.length === 0) {
+      return "I don't have any open notes with links. Add some notes with URLs first!";
+    }
+
+    const topNotes = notesWithUrls.slice(0, MAX_CONTEXT_NOTES);
+    return generateAnswer(question, topNotes);
   }
 
   // Search for relevant notes

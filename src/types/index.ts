@@ -55,4 +55,5 @@ export interface SearchResult {
   category: PARACategory;
   status: NoteStatus;
   slackMessageId: string;
+  urls?: string;
 }
