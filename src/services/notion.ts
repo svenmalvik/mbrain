@@ -1,5 +1,5 @@
 import { Client } from "@notionhq/client";
-import type { NotionEntry, SearchResult, PARACategory } from "../types/index.js";
+import type { NotionEntry, SearchResult, PARACategory, NoteStatus } from "../types/index.js";
 import {
   DATABASE_PROPERTIES,
   ensureSchemaProperties,
@@ -346,11 +346,13 @@ export async function searchNotes(
     const titleProp = props.Title as { title?: Array<{ plain_text?: string }> };
     const contentProp = props.Content as { rich_text?: Array<{ plain_text?: string }> };
     const categoryProp = props.Category as { select?: { name?: string } };
+    const statusProp = props.Status as { select?: { name?: string } };
     const slackIdProp = props["Slack Message ID"] as { rich_text?: Array<{ plain_text?: string }> };
 
     const title = titleProp?.title?.[0]?.plain_text ?? "";
     const content = contentProp?.rich_text?.[0]?.plain_text ?? "";
     const category = (categoryProp?.select?.name ?? "Uncategorized") as PARACategory;
+    const status = (statusProp?.select?.name ?? "Open") as NoteStatus;
     const slackMessageId = slackIdProp?.rich_text?.[0]?.plain_text ?? "";
 
     results.push({
@@ -358,6 +360,7 @@ export async function searchNotes(
       title,
       content,
       category,
+      status,
       slackMessageId,
     });
   }
@@ -403,16 +406,19 @@ export async function getEntryContent(
   const titleProp = properties.Title as { title?: Array<{ plain_text?: string }> };
   const contentProp = properties.Content as { rich_text?: Array<{ plain_text?: string }> };
   const categoryProp = properties.Category as { select?: { name?: string } };
+  const statusProp = properties.Status as { select?: { name?: string } };
 
   const title = titleProp?.title?.[0]?.plain_text ?? "";
   const content = contentProp?.rich_text?.[0]?.plain_text ?? "";
   const category = (categoryProp?.select?.name ?? "Uncategorized") as PARACategory;
+  const status = (statusProp?.select?.name ?? "Open") as NoteStatus;
 
   return {
     pageId: page.id,
     title,
     content,
     category,
+    status,
     slackMessageId,
   };
 }

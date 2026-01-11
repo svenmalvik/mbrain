@@ -3,7 +3,14 @@ import { Client } from "@notionhq/client";
 /** Notion database schema definition (Rule 4: extracted for shorter files) */
 export const DATABASE_PROPERTIES = {
   Title: { title: {} },
-  Content: { rich_text: {} },
+  Status: {
+    select: {
+      options: [
+        { name: "Open", color: "yellow" as const },
+        { name: "Done", color: "green" as const },
+      ],
+    },
+  },
   Category: {
     select: {
       options: [
@@ -27,21 +34,14 @@ export const DATABASE_PROPERTIES = {
       ],
     },
   },
+  URLs: { rich_text: {} },
+  Content: { rich_text: {} },
+  "Next Action": { rich_text: {} },
   Confidence: { number: { format: "percent" as const } },
   "Source Channel": { rich_text: {} },
   Timestamp: { date: {} },
   "Slack Message ID": { rich_text: {} },
-  URLs: { rich_text: {} },
-  "Next Action": { rich_text: {} },
   "Last Reminder": { date: {} },
-  Status: {
-    select: {
-      options: [
-        { name: "Open", color: "yellow" as const },
-        { name: "Done", color: "green" as const },
-      ],
-    },
-  },
 };
 
 /** Track if schema has been validated this session */
