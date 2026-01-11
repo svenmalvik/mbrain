@@ -189,22 +189,27 @@ vercel logs --follow
 mbrain/
 ├── api/
 │   ├── slack/
-│   │   └── events.ts        # Slack webhook handler (messages, reactions)
+│   │   └── events.ts          # Slack webhook handler (signature, routing)
 │   └── cron/
-│       └── hourly.ts        # Hourly reminder job
+│       └── hourly.ts          # Hourly reminder job
 ├── src/
 │   ├── config/
-│   │   ├── constants.ts     # Emojis and defaults
-│   │   └── prompts.ts       # Claude system prompts
+│   │   ├── constants.ts       # Emojis and defaults
+│   │   └── prompts.ts         # Claude system prompts
 │   ├── services/
-│   │   ├── claude.ts        # AI classification (intent + PARA)
-│   │   ├── notion.ts        # Notion CRUD operations
-│   │   ├── qa.ts            # Q&A answer generation
-│   │   ├── reminder.ts      # Pending action reminders
-│   │   ├── slack-api.ts     # Slack API helpers
-│   │   └── url-extractor.ts # URL detection from messages
+│   │   ├── claude.ts          # AI classification (intent + PARA)
+│   │   ├── notion.ts          # Notion core CRUD operations
+│   │   ├── notion-helpers.ts  # Safe type guards for Notion API
+│   │   ├── notion-schema.ts   # Database schema definitions
+│   │   ├── notion-search.ts   # Search and query operations
+│   │   ├── qa.ts              # Q&A answer generation
+│   │   ├── rate-limiter.ts    # Rate limiting (10 msgs/min/user)
+│   │   ├── reminder.ts        # Pending action reminders
+│   │   ├── slack-api.ts       # Slack API helpers
+│   │   ├── slack-handlers.ts  # Message and reaction handlers
+│   │   └── url-extractor.ts   # URL detection from messages
 │   └── types/
-│       └── index.ts         # TypeScript definitions
+│       └── index.ts           # TypeScript definitions
 ├── vercel.json
 └── tsconfig.json
 ```

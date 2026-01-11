@@ -63,9 +63,10 @@ export default async function handler(
   }
 
   // Verify cron authorization (Vercel sends this header)
+  // Rule 5: Require CRON_SECRET - if not set, reject all requests
   const authHeader = req.headers.authorization;
   const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }

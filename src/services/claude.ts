@@ -20,6 +20,16 @@ import {
 /** Maximum time for Claude API call (Rule 2: Fixed Loop Bounds) */
 const API_TIMEOUT_MS = 25000;
 
+/** Valid PARA categories for validation (Rule 5: Known enum values) */
+const VALID_CATEGORIES: readonly string[] = [
+  "Projects",
+  "Areas",
+  "Resources",
+  "Archive",
+  "Inbox",
+  "Uncategorized",
+] as const;
+
 // Lazy initialization for Anthropic client (Rule 5: validate at first use, not module load)
 let _anthropic: Anthropic | null = null;
 
@@ -116,16 +126,23 @@ export async function classifyMessage(
       throw new Error(`Invalid JSON in Claude response: ${content.text.slice(0, 100)}`);
     }
 
-    // Rule 5: Validate response structure
-    if (typeof result.isMeaningful !== "boolean" || typeof result.confidence !== "number") {
+    // Rule 5: Validate response structure - check all required fields
+    if (
+      typeof result.isMeaningful !== "boolean" ||
+      typeof result.confidence !== "number" ||
+      (result.isMeaningful && typeof result.reasoning !== "string")
+    ) {
       throw new Error("Invalid classification response structure");
     }
 
     // Rule 5: Normalize confidence to valid 0-1 range
     const normalizedConfidence = Math.max(0, Math.min(1, result.confidence));
 
-    // Apply confidence threshold - downgrade to Inbox if low confidence
+    // Rule 5: Validate category is a known value, fallback to Uncategorized
     let finalCategory: PARACategory = result.category || "Uncategorized";
+    if (!VALID_CATEGORIES.includes(finalCategory)) {
+      finalCategory = "Uncategorized";
+    }
     if (result.isMeaningful && normalizedConfidence < getConfidenceThreshold()) {
       finalCategory = "Inbox";
     }
@@ -196,8 +213,12 @@ export async function classifyMessageWithIntent(
       throw new Error(`Invalid JSON in Claude response: ${content.text.slice(0, 100)}`);
     }
 
-    // Rule 5: Validate response structure
-    if (typeof result.intent !== "string" || typeof result.isMeaningful !== "boolean") {
+    // Rule 5: Validate response structure - check all required fields
+    if (
+      typeof result.intent !== "string" ||
+      typeof result.isMeaningful !== "boolean" ||
+      !["question", "note", "noise"].includes(result.intent)
+    ) {
       throw new Error("Invalid classification response structure");
     }
 
@@ -224,8 +245,11 @@ export async function classifyMessageWithIntent(
     // Rule 5: Normalize confidence to valid 0-1 range
     const normalizedConfidence = Math.max(0, Math.min(1, result.confidence ?? 0));
 
-    // For notes, apply existing classification logic
+    // Rule 5: Validate category is a known value, fallback to Uncategorized
     let finalCategory: PARACategory = result.category || "Uncategorized";
+    if (!VALID_CATEGORIES.includes(finalCategory)) {
+      finalCategory = "Uncategorized";
+    }
     if (normalizedConfidence < getConfidenceThreshold()) {
       finalCategory = "Inbox";
     }

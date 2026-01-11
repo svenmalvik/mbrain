@@ -76,6 +76,17 @@ Local debugging with `npm run dev` connects to Vercel's dev environment. Use ngr
 - Path alias: `@/*` maps to `src/*`
 - Categories defined in `src/types/index.ts`: Projects, Areas, Resources, Archive, Inbox, Uncategorized
 - Area subcategories: Relationships, Health, Finances, Career, Home
+- Files must be under 300 lines per NASA Rule 4
+
+## Security Features
+
+- **Slack Signature Verification**: HMAC-SHA256 with 5-minute timestamp window
+- **Rate Limiting**: 10 messages/minute per user (in-memory, per-instance)
+- **Body Size Limits**: 100KB max request body to prevent DoS
+- **CRON Authentication**: Requires `CRON_SECRET` environment variable
+- **Input Validation**: Runtime assertions on all public function inputs
+- **Category Validation**: Claude responses validated against known enum values
+- **Development-Only Logging**: Sensitive IDs only logged when `NODE_ENV=development`
 
 ## Environment Variables
 
@@ -90,6 +101,7 @@ Optional:
 - `NOTION_PARENT_PAGE_ID` - Parent page for auto-created database
 - `CLAUDE_MODEL` - Model ID (default: claude-sonnet-4-20250514)
 - `CONFIDENCE_THRESHOLD` - Below this, use Inbox (default: 0.7)
+- `CRON_SECRET` - Required for cron endpoint authentication
 
 ## Custom Skills
 
