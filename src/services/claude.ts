@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { ClassificationResult, PARACategory } from "../types/index.js";
+import type { ClassificationResult, PARACategory, AreaSubcategory } from "../types/index.js";
 import { CLASSIFICATION_PROMPT } from "../config/prompts.js";
 import {
   DEFAULT_CLAUDE_MODEL,
@@ -18,6 +18,7 @@ const confidenceThreshold = parseFloat(
 interface ClaudeResponse {
   isMeaningful: boolean;
   category: PARACategory | null;
+  subcategory: AreaSubcategory | null;
   confidence: number;
   reasoning: string;
 }
@@ -25,6 +26,11 @@ interface ClaudeResponse {
 export async function classifyMessage(
   text: string
 ): Promise<ClassificationResult> {
+  // Rule 5: Runtime assertions - validate input
+  if (!text || typeof text !== "string") {
+    throw new Error("classifyMessage: text must be a non-empty string");
+  }
+
   try {
     const response = await anthropic.messages.create({
       model,
@@ -38,14 +44,29 @@ export async function classifyMessage(
       ],
     });
 
-    // Extract text content
-    const content = response.content[0];
-    if (content.type !== "text") {
-      throw new Error("Unexpected response type");
+    // Rule 7: Check return values - validate response has content
+    if (!response.content || response.content.length === 0) {
+      throw new Error("Empty response from Claude API");
     }
 
-    // Parse JSON response
-    const result = JSON.parse(content.text) as ClaudeResponse;
+    // Extract text content with bounds check (Rule 7)
+    const content = response.content[0];
+    if (!content || content.type !== "text") {
+      throw new Error("Unexpected response type from Claude API");
+    }
+
+    // Parse JSON response with specific error handling
+    let result: ClaudeResponse;
+    try {
+      result = JSON.parse(content.text) as ClaudeResponse;
+    } catch {
+      throw new Error(`Invalid JSON in Claude response: ${content.text.slice(0, 100)}`);
+    }
+
+    // Rule 5: Validate response structure
+    if (typeof result.isMeaningful !== "boolean" || typeof result.confidence !== "number") {
+      throw new Error("Invalid classification response structure");
+    }
 
     // Apply confidence threshold - downgrade to Inbox if low confidence
     let finalCategory: PARACategory = result.category || "Uncategorized";
@@ -56,6 +77,7 @@ export async function classifyMessage(
     return {
       isMeaningful: result.isMeaningful,
       category: finalCategory,
+      subcategory: finalCategory === "Areas" ? result.subcategory ?? undefined : undefined,
       confidence: result.confidence,
       reasoning: result.reasoning,
     };

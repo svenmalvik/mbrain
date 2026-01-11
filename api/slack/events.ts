@@ -4,7 +4,7 @@ import crypto from "crypto";
 import { classifyMessage } from "../../src/services/claude.js";
 import { createNotionEntry, isDuplicate } from "../../src/services/notion.js";
 import { extractUrls } from "../../src/services/url-extractor.js";
-import { CATEGORY_EMOJI } from "../../src/config/constants.js";
+import { CATEGORY_EMOJI, SUBCATEGORY_EMOJI } from "../../src/config/constants.js";
 
 // Disable body parsing to get raw body for signature verification
 export const config = {
@@ -13,19 +13,172 @@ export const config = {
   },
 };
 
+/** Maximum time to wait for request body (Rule 2: Fixed Loop Bounds) */
+const BODY_READ_TIMEOUT_MS = 5000;
+
+interface MessageEvent {
+  text: string;
+  channel: string;
+  ts: string;
+  user?: string;
+}
+
+/** Read raw request body with timeout (Rule 2) */
 async function getRawBody(req: VercelRequest): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = "";
+    const timeout = setTimeout(() => {
+      reject(new Error("Request body read timeout"));
+    }, BODY_READ_TIMEOUT_MS);
+
     req.on("data", (chunk) => {
       data += chunk;
     });
     req.on("end", () => {
+      clearTimeout(timeout);
       resolve(data);
     });
-    req.on("error", reject);
+    req.on("error", (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
   });
 }
 
+/** Verify Slack request signature (Rule 4: extracted for shorter handler) */
+function verifySlackSignature(
+  rawBody: string,
+  timestamp: string,
+  slackSignature: string,
+  signingSecret: string
+): boolean {
+  const sigBasestring = `v0:${timestamp}:${rawBody}`;
+  const mySignature = `v0=${crypto
+    .createHmac("sha256", signingSecret)
+    .update(sigBasestring, "utf8")
+    .digest("hex")}`;
+  return mySignature === slackSignature;
+}
+
+/** Add reaction to Slack message (Rule 7: check response) */
+async function addSlackReaction(
+  token: string,
+  channelId: string,
+  messageId: string
+): Promise<void> {
+  const response = await fetch("https://slack.com/api/reactions.add", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      channel: channelId,
+      timestamp: messageId,
+      name: "white_check_mark",
+    }),
+  });
+
+  // Rule 7: Check return values
+  if (!response.ok) {
+    console.error(`Slack reactions.add failed: ${response.status}`);
+  }
+}
+
+/** Post thread reply to Slack (Rule 7: check response) */
+async function postSlackReply(
+  token: string,
+  channelId: string,
+  messageId: string,
+  text: string
+): Promise<void> {
+  const response = await fetch("https://slack.com/api/chat.postMessage", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      channel: channelId,
+      thread_ts: messageId,
+      text,
+    }),
+  });
+
+  // Rule 7: Check return values
+  if (!response.ok) {
+    console.error(`Slack chat.postMessage failed: ${response.status}`);
+  }
+}
+
+/** Build reply message text */
+function buildReplyText(
+  category: string,
+  subcategory: string | undefined,
+  confidence: number
+): string {
+  const emoji = CATEGORY_EMOJI[category as keyof typeof CATEGORY_EMOJI];
+  const subcategoryText = subcategory
+    ? ` -> ${subcategory} ${SUBCATEGORY_EMOJI[subcategory as keyof typeof SUBCATEGORY_EMOJI]}`
+    : "";
+  return `Saved to Notion -> ${category} ${emoji}${subcategoryText} (confidence: ${confidence.toFixed(2)})`;
+}
+
+/** Process and classify a Slack message (Rule 4: split from processMessage) */
+async function processMessage(event: MessageEvent): Promise<void> {
+  // Rule 5: Validate input
+  if (!event.ts || !event.channel || !event.text) {
+    throw new Error("processMessage: invalid event structure");
+  }
+
+  const messageId = event.ts;
+  const channelId = event.channel;
+  const text = event.text;
+
+  if (!text.trim()) {
+    return;
+  }
+
+  if (await isDuplicate(messageId)) {
+    return;
+  }
+
+  const classification = await classifyMessage(text);
+
+  if (!classification.isMeaningful) {
+    return;
+  }
+
+  const urls = extractUrls(text);
+
+  await createNotionEntry({
+    content: text,
+    category: classification.category,
+    subcategory: classification.subcategory,
+    confidence: classification.confidence,
+    slackMessageId: messageId,
+    channelName: channelId,
+    timestamp: new Date(parseFloat(messageId) * 1000),
+    urls,
+  });
+
+  // Rule 5: Validate environment
+  const token = process.env.SLACK_BOT_TOKEN;
+  if (!token) {
+    throw new Error("SLACK_BOT_TOKEN not configured");
+  }
+
+  await addSlackReaction(token, channelId, messageId);
+
+  const replyText = buildReplyText(
+    classification.category,
+    classification.subcategory,
+    classification.confidence
+  );
+  await postSlackReply(token, channelId, messageId, replyText);
+}
+
+/** Main Slack event handler */
 export default async function handler(
   req: VercelRequest,
   res: VercelResponse
@@ -35,8 +188,8 @@ export default async function handler(
   let body: Record<string, unknown>;
   try {
     body = JSON.parse(rawBody);
-  } catch (e) {
-    console.error("Failed to parse body:", e);
+  } catch {
+    console.error("Failed to parse body");
     res.status(400).json({ error: "Invalid JSON" });
     return;
   }
@@ -67,13 +220,7 @@ export default async function handler(
     return;
   }
 
-  const sigBasestring = `v0:${timestamp}:${rawBody}`;
-  const mySignature = `v0=${crypto
-    .createHmac("sha256", signingSecret)
-    .update(sigBasestring, "utf8")
-    .digest("hex")}`;
-
-  if (mySignature !== slackSignature) {
+  if (!verifySlackSignature(rawBody, timestamp, slackSignature, signingSecret)) {
     res.status(401).json({ error: "Invalid signature" });
     return;
   }
@@ -94,72 +241,4 @@ export default async function handler(
   }
 
   res.status(200).json({ ok: true });
-}
-
-interface MessageEvent {
-  text: string;
-  channel: string;
-  ts: string;
-  user?: string;
-}
-
-async function processMessage(event: MessageEvent): Promise<void> {
-  const messageId = event.ts;
-  const channelId = event.channel;
-  const text = event.text;
-
-  if (!text.trim()) {
-    return;
-  }
-
-  if (await isDuplicate(messageId)) {
-    return;
-  }
-
-  const classification = await classifyMessage(text);
-
-  if (!classification.isMeaningful) {
-    return;
-  }
-
-  const urls = extractUrls(text);
-
-  await createNotionEntry({
-    content: text,
-    category: classification.category,
-    confidence: classification.confidence,
-    slackMessageId: messageId,
-    channelName: channelId,
-    timestamp: new Date(parseFloat(messageId) * 1000),
-    urls,
-  });
-
-  const token = process.env.SLACK_BOT_TOKEN!;
-
-  await fetch("https://slack.com/api/reactions.add", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      channel: channelId,
-      timestamp: messageId,
-      name: "white_check_mark",
-    }),
-  });
-
-  const emoji = CATEGORY_EMOJI[classification.category];
-  await fetch("https://slack.com/api/chat.postMessage", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      channel: channelId,
-      thread_ts: messageId,
-      text: `Saved to Notion → ${classification.category} ${emoji} (confidence: ${classification.confidence.toFixed(2)})`,
-    }),
-  });
 }

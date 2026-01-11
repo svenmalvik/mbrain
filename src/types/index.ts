@@ -6,9 +6,17 @@ export type PARACategory =
   | "Inbox"
   | "Uncategorized";
 
+export type AreaSubcategory =
+  | "Relationships"
+  | "Health"
+  | "Finances"
+  | "Career"
+  | "Home";
+
 export interface ClassificationResult {
   isMeaningful: boolean;
   category: PARACategory;
+  subcategory?: AreaSubcategory;
   confidence: number;
   reasoning: string;
 }
@@ -16,6 +24,7 @@ export interface ClassificationResult {
 export interface NotionEntry {
   content: string;
   category: PARACategory;
+  subcategory?: AreaSubcategory;
   confidence: number;
   slackMessageId: string;
   channelName: string;

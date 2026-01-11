@@ -6,69 +6,76 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **mbrain** is a personal knowledge management system ("Second Brain") that captures fleeting thoughts from Slack, processes them with AI assistance, and organizes them into a searchable repository using the PARA method (Projects, Areas, Resources, Archive).
 
-The system architecture:
-- **Capture Layer**: Slack `#brain` channel → Vercel serverless function
-- **Process Layer**: Claude AI for noise filtering and PARA classification
-- **Storage Layer**: Notion database with structured properties
+## Architecture & Data Flow
 
-## Development Status
+```
+Slack #brain channel
+       ↓
+api/slack/events.ts (Vercel serverless)
+       ↓ signature verification, duplicate check
+src/services/claude.ts → classifyMessage()
+       ↓ returns PARACategory + confidence
+src/services/notion.ts → createNotionEntry()
+       ↓
+Notion database (structured PARA storage)
+       ↓
+Slack reaction (✅) + thread reply with category
+```
 
-This project is in **active development**. The system specification is documented in `docs/spec-slack-notion.md`.
+Key behaviors:
+- Messages below confidence threshold (default 0.7) go to "Inbox"
+- Non-meaningful messages (noise) are silently dropped
+- Classification errors fallback to "Uncategorized"
+- `waitUntil()` enables async processing after 200 response
 
 ## Tech Stack
 
-- **Runtime**: Node.js 20.x on Vercel
-- **Language**: TypeScript (strict mode)
-- **Slack Integration**: @slack/bolt
-- **Storage**: @notionhq/client (Notion API)
-- **AI Classification**: @anthropic-ai/sdk (Claude)
-
-## Project Structure
-
-```
-mbrain/
-├── api/slack/events.ts      # Vercel serverless endpoint
-├── src/
-│   ├── app.ts               # Slack Bolt app initialization
-│   ├── handlers/message.ts  # Message event handler
-│   ├── services/
-│   │   ├── claude.ts        # PARA classification
-│   │   ├── notion.ts        # Database operations
-│   │   └── url-extractor.ts # URL parsing
-│   ├── config/
-│   │   ├── constants.ts     # Category emoji mappings
-│   │   └── prompts.ts       # Claude system prompt
-│   └── types/index.ts       # TypeScript types
-├── docs/spec-slack-notion.md # Technical specification
-└── package.json
-```
+- **Runtime**: Node.js 20.x on Vercel (serverless)
+- **Language**: TypeScript (strict mode, ES modules)
+- **Slack**: @slack/bolt
+- **Storage**: @notionhq/client
+- **AI**: @anthropic-ai/sdk
 
 ## Build Commands
 
 ```bash
 npm install         # Install dependencies
-npm run typecheck   # Type checking
-npm run build       # Build the project
-npm run dev         # Local development with Vercel
+npm run typecheck   # Type checking only
+npm run build       # Compile TypeScript
+npm run lint        # ESLint on src/ and api/
+npm run dev         # Local dev server (vercel dev)
 ```
 
-## Code Standards
+## Vercel Deployment & Debugging
 
-### TypeScript
-- Use strict TypeScript (`strict: true` in tsconfig)
-- Functions under 250 lines
-- Use ES modules (`.js` extension in imports)
-- Never log sensitive data (API keys, message content in production)
+```bash
+# Deployment
+vercel              # Deploy to preview environment
+vercel --prod       # Deploy to production
 
-### Error Handling
-- Graceful fallback to "Uncategorized" on classification errors
-- Reply in Slack thread on failures
-- Structured logging with context (messageId, channel, category)
+# Environment variables
+vercel env pull     # Pull env vars to .env.local
+vercel env add      # Add a new env var
+vercel env ls       # List env vars
 
-### Slack Integration
-- Use `processBeforeResponse: true` for serverless compatibility
-- Verify webhook signatures (handled by Bolt)
-- Handle URL verification challenge explicitly
+# Debugging
+vercel logs                        # Stream production logs
+vercel logs --follow               # Tail logs in real-time
+vercel logs <deployment-url>       # Logs for specific deployment
+```
+
+Function configuration in `vercel.json`:
+- `api/slack/events.ts` has 30s max duration (Slack requires response within 3s, but `waitUntil()` handles async processing)
+
+Local debugging with `npm run dev` connects to Vercel's dev environment. Use ngrok or similar to expose localhost for Slack webhook testing.
+
+## Code Conventions
+
+- **NASA Power of Ten coding rules must be applied** (use `/nasa` skill for guidance)
+- ES module imports use `.js` extension (e.g., `from "./types/index.js"`)
+- Path alias: `@/*` maps to `src/*`
+- Categories defined in `src/types/index.ts`: Projects, Areas, Resources, Archive, Inbox, Uncategorized
+- Area subcategories: Relationships, Health, Finances, Career, Home
 
 ## Environment Variables
 
