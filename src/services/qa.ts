@@ -7,10 +7,23 @@ const MAX_CONTEXT_NOTES = 5;
 /** Keywords that indicate a question about URLs/links */
 const URL_KEYWORDS = ["link", "links", "url", "urls", "website", "websites"];
 
-/** Check if question is asking about URLs/links */
+/** Check if question is asking about URLs/links (Rule 2: bounded iteration) */
 function isUrlQuestion(question: string): boolean {
+  // Rule 5: Runtime assertions
+  if (!question || typeof question !== "string") {
+    return false;
+  }
+
   const lowerQuestion = question.toLowerCase();
-  return URL_KEYWORDS.some((keyword) => lowerQuestion.includes(keyword));
+  // Rule 2: URL_KEYWORDS has fixed length (6 items)
+  for (let i = 0; i < URL_KEYWORDS.length; i++) {
+    const keyword = URL_KEYWORDS[i];
+    // Rule 7: Check indexed access (noUncheckedIndexedAccess)
+    if (keyword && lowerQuestion.includes(keyword)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Answer a question using all notes (channel question) */

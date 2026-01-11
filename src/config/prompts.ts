@@ -93,4 +93,14 @@ INSTRUCTIONS:
 7. Pay attention to note Status: "Open" notes are active/pending, "Done" notes are completed
 8. For questions about what "needs attention" or "to do", prioritize Open notes over Done notes
 
+FORMATTING (use Slack mrkdwn, NOT Markdown):
+- Bold: *text* (not **text**)
+- Italic: _text_ (not *text*)
+- Strikethrough: ~text~
+- Code: \`code\` (same as markdown)
+- Code block: \`\`\`code\`\`\` (same as markdown)
+- Links: <https://example.com|link text> (not [text](url))
+- Lists: Use bullet points with plain - or •
+- No headers (# doesn't work in Slack)
+
 Answer the following question:`;

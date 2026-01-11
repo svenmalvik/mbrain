@@ -19,6 +19,46 @@ const notion = new Client({
 
 let databaseId = process.env.NOTION_DATABASE_ID?.trim();
 
+/** Extract SearchResult from Notion page properties (Rule 4: shared helper) */
+function extractSearchResult(
+  pageId: string,
+  properties: Record<string, unknown>
+): SearchResult {
+  // Rule 5: Validate input
+  if (!pageId || !properties) {
+    throw new Error("extractSearchResult: pageId and properties are required");
+  }
+
+  const titleProp = properties.Title as { title?: Array<{ plain_text?: string }> };
+  const contentProp = properties.Content as { rich_text?: Array<{ plain_text?: string }> };
+  const categoryProp = properties.Category as { select?: { name?: string } };
+  const statusProp = properties.Status as { select?: { name?: string } };
+  const urlsProp = properties.URLs as { rich_text?: Array<{ plain_text?: string }> };
+  const slackIdProp = properties["Slack Message ID"] as { rich_text?: Array<{ plain_text?: string }> };
+
+  const title = titleProp?.title?.[0]?.plain_text ?? "";
+  const content = contentProp?.rich_text?.[0]?.plain_text ?? "";
+  const category = (categoryProp?.select?.name ?? "Uncategorized") as PARACategory;
+  const status = (statusProp?.select?.name ?? "Open") as NoteStatus;
+  const urls = urlsProp?.rich_text?.[0]?.plain_text ?? "";
+  const slackMessageId = slackIdProp?.rich_text?.[0]?.plain_text ?? "";
+
+  const result: SearchResult = {
+    pageId,
+    title,
+    content,
+    category,
+    status,
+    slackMessageId,
+  };
+
+  if (urls) {
+    result.urls = urls;
+  }
+
+  return result;
+}
+
 export async function ensureDatabaseExists(): Promise<string> {
   if (databaseId) {
     await ensureSchemaProperties(notion, databaseId);
@@ -70,8 +110,34 @@ export async function isDuplicate(slackMessageId: string): Promise<boolean> {
   return response.results.length > 0;
 }
 
-export async function createNotionEntry(entry: NotionEntry): Promise<string> {
-  // Rule 5: Runtime assertions - validate input
+/** Build Notion page properties from entry (Rule 4: extracted helper) */
+function buildNotionProperties(entry: NotionEntry): Record<string, unknown> {
+  const title = entry.content.slice(0, 100) + (entry.content.length > 100 ? "..." : "");
+
+  const properties: Record<string, unknown> = {
+    Title: { title: [{ type: "text", text: { content: title } }] },
+    Content: { rich_text: [{ type: "text", text: { content: entry.content } }] },
+    Category: { select: { name: entry.category } },
+    Confidence: { number: entry.confidence },
+    "Source Channel": { rich_text: [{ type: "text", text: { content: entry.channelName } }] },
+    Timestamp: { date: { start: entry.timestamp.toISOString() } },
+    "Slack Message ID": { rich_text: [{ type: "text", text: { content: entry.slackMessageId } }] },
+    URLs: { rich_text: [{ type: "text", text: { content: entry.urls.join(", ") } }] },
+    Status: { select: { name: "Open" } },
+  };
+
+  if (entry.nextAction) {
+    properties["Next Action"] = { rich_text: [{ type: "text", text: { content: entry.nextAction } }] };
+  }
+  if (entry.subcategory) {
+    properties.Subcategory = { select: { name: entry.subcategory } };
+  }
+
+  return properties;
+}
+
+/** Validate NotionEntry input (Rule 5: runtime assertions) */
+function validateNotionEntry(entry: NotionEntry): void {
   if (!entry || typeof entry !== "object") {
     throw new Error("createNotionEntry: entry must be an object");
   }
@@ -84,58 +150,16 @@ export async function createNotionEntry(entry: NotionEntry): Promise<string> {
   if (!entry.slackMessageId || typeof entry.slackMessageId !== "string") {
     throw new Error("createNotionEntry: entry.slackMessageId must be a non-empty string");
   }
+}
+
+export async function createNotionEntry(entry: NotionEntry): Promise<string> {
+  // Rule 5: Validate input using helper
+  validateNotionEntry(entry);
 
   const dbId = await ensureDatabaseExists();
 
-  // Generate title from first 100 chars
-  const title =
-    entry.content.slice(0, 100) + (entry.content.length > 100 ? "..." : "");
-
-  const properties: Record<string, unknown> = {
-    Title: {
-      title: [{ type: "text", text: { content: title } }],
-    },
-    Content: {
-      rich_text: [{ type: "text", text: { content: entry.content } }],
-    },
-    Category: {
-      select: { name: entry.category },
-    },
-    Confidence: {
-      number: entry.confidence,
-    },
-    "Source Channel": {
-      rich_text: [{ type: "text", text: { content: entry.channelName } }],
-    },
-    Timestamp: {
-      date: { start: entry.timestamp.toISOString() },
-    },
-    "Slack Message ID": {
-      rich_text: [{ type: "text", text: { content: entry.slackMessageId } }],
-    },
-    URLs: {
-      rich_text: [
-        { type: "text", text: { content: entry.urls.join(", ") } },
-      ],
-    },
-    Status: {
-      select: { name: "Open" },
-    },
-  };
-
-  // Add next action if present
-  if (entry.nextAction) {
-    properties["Next Action"] = {
-      rich_text: [{ type: "text", text: { content: entry.nextAction } }],
-    };
-  }
-
-  // Add subcategory only for Areas
-  if (entry.subcategory) {
-    properties.Subcategory = {
-      select: { name: entry.subcategory },
-    };
-  }
+  // Rule 4: Use helper to build properties
+  const properties = buildNotionProperties(entry);
 
   const response = await notion.pages.create({
     parent: { database_id: dbId },
@@ -340,35 +364,8 @@ export async function searchNotes(
     if (pageWithParent.parent?.type !== "database_id") continue;
     if (pageWithParent.parent.database_id !== dbId) continue;
 
-    const props = pageWithParent.properties;
-
-    // Extract properties with type safety
-    const titleProp = props.Title as { title?: Array<{ plain_text?: string }> };
-    const contentProp = props.Content as { rich_text?: Array<{ plain_text?: string }> };
-    const categoryProp = props.Category as { select?: { name?: string } };
-    const statusProp = props.Status as { select?: { name?: string } };
-    const urlsProp = props.URLs as { rich_text?: Array<{ plain_text?: string }> };
-    const slackIdProp = props["Slack Message ID"] as { rich_text?: Array<{ plain_text?: string }> };
-
-    const title = titleProp?.title?.[0]?.plain_text ?? "";
-    const content = contentProp?.rich_text?.[0]?.plain_text ?? "";
-    const category = (categoryProp?.select?.name ?? "Uncategorized") as PARACategory;
-    const status = (statusProp?.select?.name ?? "Open") as NoteStatus;
-    const urls = urlsProp?.rich_text?.[0]?.plain_text ?? "";
-    const slackMessageId = slackIdProp?.rich_text?.[0]?.plain_text ?? "";
-
-    const result: SearchResult = {
-      pageId: page.id,
-      title,
-      content,
-      category,
-      status,
-      slackMessageId,
-    };
-    if (urls) {
-      result.urls = urls;
-    }
-    results.push(result);
+    // Rule 4: Use shared helper for property extraction
+    results.push(extractSearchResult(page.id, pageWithParent.properties));
   }
 
   return results;
@@ -408,33 +405,8 @@ export async function getEntryContent(
 
   const properties = (page as { properties: Record<string, unknown> }).properties;
 
-  // Extract properties with type safety
-  const titleProp = properties.Title as { title?: Array<{ plain_text?: string }> };
-  const contentProp = properties.Content as { rich_text?: Array<{ plain_text?: string }> };
-  const categoryProp = properties.Category as { select?: { name?: string } };
-  const statusProp = properties.Status as { select?: { name?: string } };
-
-  const title = titleProp?.title?.[0]?.plain_text ?? "";
-  const content = contentProp?.rich_text?.[0]?.plain_text ?? "";
-  const category = (categoryProp?.select?.name ?? "Uncategorized") as PARACategory;
-  const status = (statusProp?.select?.name ?? "Open") as NoteStatus;
-
-  const result: SearchResult = {
-    pageId: page.id,
-    title,
-    content,
-    category,
-    status,
-    slackMessageId,
-  };
-
-  const urlsProp = properties.URLs as { rich_text?: Array<{ plain_text?: string }> };
-  const urls = urlsProp?.rich_text?.[0]?.plain_text ?? "";
-  if (urls) {
-    result.urls = urls;
-  }
-
-  return result;
+  // Rule 4: Use shared helper for property extraction
+  return extractSearchResult(page.id, properties);
 }
 
 /** Maximum results for URL query */
@@ -443,6 +415,11 @@ const MAX_URL_RESULTS = 20;
 /** Get all Open notes that have URLs */
 export async function getNotesWithUrls(): Promise<SearchResult[]> {
   const dbId = await ensureDatabaseExists();
+
+  // Rule 5: Validate database ID
+  if (!dbId || typeof dbId !== "string") {
+    throw new Error("getNotesWithUrls: database ID is required");
+  }
 
   const response = await notion.databases.query({
     database_id: dbId,
@@ -465,6 +442,11 @@ export async function getNotesWithUrls(): Promise<SearchResult[]> {
     page_size: MAX_URL_RESULTS,
   });
 
+  // Rule 7: Check return value
+  if (!response || !Array.isArray(response.results)) {
+    throw new Error("getNotesWithUrls: invalid response from Notion API");
+  }
+
   const results: SearchResult[] = [];
 
   // Rule 2: Fixed loop bounds
@@ -475,30 +457,12 @@ export async function getNotesWithUrls(): Promise<SearchResult[]> {
 
     const properties = (page as { properties: Record<string, unknown> }).properties;
 
-    const titleProp = properties.Title as { title?: Array<{ plain_text?: string }> };
-    const contentProp = properties.Content as { rich_text?: Array<{ plain_text?: string }> };
-    const categoryProp = properties.Category as { select?: { name?: string } };
-    const statusProp = properties.Status as { select?: { name?: string } };
-    const urlsProp = properties.URLs as { rich_text?: Array<{ plain_text?: string }> };
-    const slackIdProp = properties["Slack Message ID"] as { rich_text?: Array<{ plain_text?: string }> };
+    // Rule 4: Use shared helper for property extraction
+    const result = extractSearchResult(page.id, properties);
 
-    const title = titleProp?.title?.[0]?.plain_text ?? "";
-    const content = contentProp?.rich_text?.[0]?.plain_text ?? "";
-    const category = (categoryProp?.select?.name ?? "Uncategorized") as PARACategory;
-    const status = (statusProp?.select?.name ?? "Open") as NoteStatus;
-    const urls = urlsProp?.rich_text?.[0]?.plain_text ?? "";
-    const slackMessageId = slackIdProp?.rich_text?.[0]?.plain_text ?? "";
-
-    if (urls) {
-      results.push({
-        pageId: page.id,
-        title,
-        content,
-        category,
-        status,
-        slackMessageId,
-        urls,
-      });
+    // Only include results that have URLs (filter already applied in query)
+    if (result.urls) {
+      results.push(result);
     }
   }
 

@@ -84,6 +84,75 @@ function buildReplyText(
   return `Saved to Notion -> ${category} ${emoji}${subcategoryText} (confidence: ${confidence.toFixed(2)})`;
 }
 
+/** Reaction event item structure */
+interface ReactionItem {
+  ts?: string;
+  channel?: string;
+}
+
+/** Handle reaction_added event (Rule 4: extracted function) */
+async function handleReactionAdded(
+  reaction: string,
+  item: ReactionItem
+): Promise<boolean> {
+  // Rule 5: Validate input
+  if (!reaction || !item?.ts) {
+    return false;
+  }
+
+  const messageTs = item.ts;
+  const channel = item.channel;
+  const token = process.env.SLACK_BOT_TOKEN;
+
+  if (reaction === "white_check_mark") {
+    const marked = await markEntryAsDone(messageTs);
+    if (marked && token && channel) {
+      await postSlackReply(token, channel, messageTs, "✅ Marked as done");
+    }
+    return true;
+  }
+
+  if (reaction === "x") {
+    const deleted = await deleteEntry(messageTs);
+    if (deleted && token && channel) {
+      await postSlackReply(token, channel, messageTs, "🗑️ Note deleted from Notion");
+    }
+    return true;
+  }
+
+  return false;
+}
+
+/** Handle reaction_removed event (Rule 4: extracted function) */
+async function handleReactionRemoved(
+  reaction: string,
+  item: ReactionItem
+): Promise<boolean> {
+  // Rule 5: Validate input
+  if (!reaction || !item?.ts) {
+    return false;
+  }
+
+  const messageTs = item.ts;
+  const channel = item.channel;
+  const token = process.env.SLACK_BOT_TOKEN;
+
+  if (reaction === "white_check_mark") {
+    const marked = await markEntryAsOpen(messageTs);
+    if (marked && token && channel) {
+      await postSlackReply(token, channel, messageTs, "🔄 Reopened");
+    }
+    return true;
+  }
+
+  if (reaction === "x" && token && channel) {
+    await restoreEntryFromSlack(token, channel, messageTs);
+    return true;
+  }
+
+  return false;
+}
+
 /** Re-create a Notion entry from a Slack message (Rule 4: extracted function) */
 async function restoreEntryFromSlack(
   token: string,
@@ -328,76 +397,32 @@ export default async function handler(
       return;
     }
 
-    // Handle reaction_added events
+    // Handle reaction_added events (Rule 4: delegated to helper)
     if (event?.type === "reaction_added") {
       const reaction = event.reaction as string | undefined;
-      const item = event.item as { ts?: string } | undefined;
+      const item = event.item as ReactionItem | undefined;
 
-      // Mark as done when user adds white_check_mark emoji
-      if (reaction === "white_check_mark" && item?.ts) {
+      if (reaction && item) {
         res.status(200).json({ ok: true });
-
         waitUntil(
-          markEntryAsDone(item.ts).catch((error) =>
-            console.error("Error marking entry as done:", error)
+          handleReactionAdded(reaction, item).catch((error) =>
+            console.error("Error handling reaction_added:", error)
           )
-        );
-        return;
-      }
-
-      // Delete entry when user adds x emoji
-      if (reaction === "x" && item?.ts) {
-        const messageTs = item.ts;
-        const channel = (event.item as { channel?: string })?.channel;
-        const token = process.env.SLACK_BOT_TOKEN;
-
-        res.status(200).json({ ok: true });
-
-        waitUntil(
-          (async () => {
-            const deleted = await deleteEntry(messageTs);
-            if (deleted && token && channel) {
-              await postSlackReply(token, channel, messageTs, "🗑️ Note deleted from Notion");
-            }
-          })().catch((error) => console.error("Error deleting entry:", error))
         );
         return;
       }
     }
 
-    // Handle reaction_removed events
+    // Handle reaction_removed events (Rule 4: delegated to helper)
     if (event?.type === "reaction_removed") {
       const reaction = event.reaction as string | undefined;
-      const item = event.item as { ts?: string } | undefined;
+      const item = event.item as ReactionItem | undefined;
 
-      // Mark as open when user removes white_check_mark emoji
-      if (reaction === "white_check_mark" && item?.ts) {
+      if (reaction && item) {
         res.status(200).json({ ok: true });
-
         waitUntil(
-          markEntryAsOpen(item.ts).catch((error) =>
-            console.error("Error marking entry as open:", error)
-          )
-        );
-        return;
-      }
-
-      // Re-create entry when user removes x emoji
-      if (reaction === "x" && item?.ts) {
-        const messageTs = item.ts;
-        const channel = (event.item as { channel?: string })?.channel;
-        const token = process.env.SLACK_BOT_TOKEN;
-
-        if (!token || !channel) {
-          res.status(200).json({ ok: true });
-          return;
-        }
-
-        res.status(200).json({ ok: true });
-
-        waitUntil(
-          restoreEntryFromSlack(token, channel, messageTs).catch((error) =>
-            console.error("Error restoring entry:", error)
+          handleReactionRemoved(reaction, item).catch((error) =>
+            console.error("Error handling reaction_removed:", error)
           )
         );
         return;
