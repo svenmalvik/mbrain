@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'NASA POWER OF TEN - Apply before writing code:\n- No recursion (use iterative with explicit stack)\n- All loops must have fixed bounds\n- Functions ≤40 lines, files ≤300 lines\n- Runtime assertions on inputs/outputs\n- Check all return values\n- Property chains max 3 deep\n- TypeScript strict mode, zero warnings'"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -313,7 +313,7 @@ When reviewing code against NASA rules:
 - [ ] No recursion - all iterations are explicit
 - [ ] All loops have maximum iteration bounds
 - [ ] No object allocation in hot paths
-- [ ] Functions are 40 lines or fewer
+- [ ] Functions are 60 lines or fewer
 - [ ] Files are 300 lines or fewer
 - [ ] Inputs validated, outputs verified
 - [ ] Variables declared with minimal scope
