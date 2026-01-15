@@ -11,6 +11,14 @@ export const DATABASE_PROPERTIES = {
       ],
     },
   },
+  "Synced Status": {
+    select: {
+      options: [
+        { name: "Open", color: "yellow" as const },
+        { name: "Done", color: "green" as const },
+      ],
+    },
+  },
   Category: {
     select: {
       options: [
@@ -73,6 +81,9 @@ export async function ensureSchemaProperties(
     }
     if (!properties.Status) {
       missingProps.Status = DATABASE_PROPERTIES.Status;
+    }
+    if (!properties["Synced Status"]) {
+      missingProps["Synced Status"] = DATABASE_PROPERTIES["Synced Status"];
     }
 
     const missingPropKeys = Object.keys(missingProps);

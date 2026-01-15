@@ -3,9 +3,20 @@ import {
   getPendingActions,
   updateLastReminder,
 } from "../../src/services/reminder.js";
+import {
+  getStatusChanges,
+  updateSyncedStatus,
+} from "../../src/services/status-sync.js";
+import {
+  addSlackReaction,
+  removeSlackReaction,
+} from "../../src/services/slack-api.js";
 
 /** Maximum number of reminders to send per cron run (Rule 2: Fixed Loop Bounds) */
 const MAX_REMINDERS_PER_RUN = 20;
+
+/** Maximum number of status syncs per cron run (Rule 2: Fixed Loop Bounds) */
+const MAX_STATUS_SYNCS_PER_RUN = 20;
 
 /** Post thread reply to Slack (Rule 7: check response) */
 async function postSlackReminder(
@@ -49,7 +60,48 @@ async function postSlackReminder(
   return data.ok === true;
 }
 
-/** Hourly cron job to send action reminders */
+/** Post status update reply to Slack (Rule 7: check response) */
+async function postSlackStatusUpdate(
+  token: string,
+  channelId: string,
+  messageTs: string,
+  text: string
+): Promise<boolean> {
+  // Rule 5: Validate input
+  if (!token || !channelId || !messageTs || !text) {
+    throw new Error("postSlackStatusUpdate: missing required parameters");
+  }
+
+  const response = await fetch("https://slack.com/api/chat.postMessage", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      channel: channelId,
+      thread_ts: messageTs,
+      text,
+    }),
+  });
+
+  // Rule 7: Check return values
+  if (!response.ok) {
+    console.error(`Slack chat.postMessage failed: ${response.status}`);
+    return false;
+  }
+
+  let data: { ok?: boolean };
+  try {
+    data = await response.json();
+  } catch {
+    console.error("postSlackStatusUpdate: Failed to parse JSON response");
+    return false;
+  }
+  return data.ok === true;
+}
+
+/** Hourly cron job to send action reminders and sync status changes */
 export default async function handler(
   req: VercelRequest,
   res: VercelResponse
@@ -100,10 +152,49 @@ export default async function handler(
       }
     }
 
+    // Status sync: Reflect Notion status changes back to Slack
+    const statusChanges = await getStatusChanges();
+    const changesToProcess = statusChanges.slice(0, MAX_STATUS_SYNCS_PER_RUN);
+    let statusSynced = 0;
+
+    for (const change of changesToProcess) {
+      // Rule 7: Wrap each iteration to prevent partial failures
+      try {
+        if (change.currentStatus === "Done" && change.syncedStatus !== "Done") {
+          // Marked as done in Notion - add checkmark reaction
+          await addSlackReaction(token, change.channelId, change.slackMessageId);
+          await postSlackStatusUpdate(
+            token,
+            change.channelId,
+            change.slackMessageId,
+            "✅ Marked as done in Notion"
+          );
+          await updateSyncedStatus(change.pageId, "Done");
+          statusSynced++;
+        } else if (change.currentStatus === "Open" && change.syncedStatus === "Done") {
+          // Reopened in Notion - remove checkmark reaction
+          await removeSlackReaction(token, change.channelId, change.slackMessageId);
+          await postSlackStatusUpdate(
+            token,
+            change.channelId,
+            change.slackMessageId,
+            "🔄 Reopened in Notion"
+          );
+          await updateSyncedStatus(change.pageId, "Open");
+          statusSynced++;
+        }
+      } catch (error) {
+        console.error(`Failed to sync status for ${change.pageId}:`, error);
+        // Continue with next change instead of failing entire batch
+      }
+    }
+
     res.status(200).json({
       ok: true,
       remindersSent,
-      totalPending: pendingActions.length,
+      totalPendingReminders: pendingActions.length,
+      statusSynced,
+      totalPendingStatusChanges: statusChanges.length,
     });
   } catch (error) {
     console.error("Cron job failed:", error);

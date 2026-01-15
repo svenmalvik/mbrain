@@ -105,6 +105,7 @@ export function buildNotionProperties(entry: NotionEntry): Record<string, unknow
     "Slack Message ID": { rich_text: [{ type: "text", text: { content: entry.slackMessageId } }] },
     URLs: { rich_text: [{ type: "text", text: { content: entry.urls.join(", ") } }] },
     Status: { select: { name: "Open" } },
+    "Synced Status": { select: { name: "Open" } },
   };
 
   if (entry.nextAction) {
