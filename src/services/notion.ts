@@ -212,6 +212,9 @@ export async function markEntryAsDone(slackMessageId: string): Promise<boolean> 
       Status: {
         select: { name: "Done" },
       },
+      "Synced Status": {
+        select: { name: "Done" },
+      },
     },
   });
 
@@ -234,6 +237,9 @@ export async function markEntryAsOpen(slackMessageId: string): Promise<boolean> 
     page_id: entry.pageId,
     properties: {
       Status: {
+        select: { name: "Open" },
+      },
+      "Synced Status": {
         select: { name: "Open" },
       },
     },
