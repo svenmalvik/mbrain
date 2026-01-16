@@ -2,6 +2,8 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import {
   getPendingActions,
   updateLastReminder,
+  parkEntry,
+  AUTO_PARK_THRESHOLD,
 } from "../../src/services/reminder.js";
 import {
   getStatusChanges,
@@ -143,8 +145,20 @@ export default async function handler(
         );
 
         if (success) {
-          await updateLastReminder(action.pageId);
+          await updateLastReminder(action.pageId, action.reminderCount);
           remindersSent++;
+
+          // Auto-park after reaching threshold (new count = current + 1)
+          const newCount = action.reminderCount + 1;
+          if (newCount >= AUTO_PARK_THRESHOLD) {
+            await parkEntry(action.pageId);
+            await postSlackReminder(
+              token,
+              action.channelId,
+              action.slackMessageId,
+              "🅿️ Parked after 8 reminders"
+            );
+          }
         }
       } catch (error) {
         console.error(`Failed to process reminder for ${action.pageId}:`, error);

@@ -13,7 +13,7 @@ export type AreaSubcategory =
   | "Career"
   | "Home";
 
-export type NoteStatus = "Open" | "Done";
+export type NoteStatus = "Open" | "Done" | "Parked";
 
 export interface ClassificationResult {
   isMeaningful: boolean;

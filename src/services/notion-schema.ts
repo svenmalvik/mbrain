@@ -8,6 +8,7 @@ export const DATABASE_PROPERTIES = {
       options: [
         { name: "Open", color: "yellow" as const },
         { name: "Done", color: "green" as const },
+        { name: "Parked", color: "gray" as const },
       ],
     },
   },
@@ -50,6 +51,7 @@ export const DATABASE_PROPERTIES = {
   Timestamp: { date: {} },
   "Slack Message ID": { rich_text: {} },
   "Last Reminder": { date: {} },
+  "Reminder Count": { number: {} },
 };
 
 /** Track if schema has been validated this session */
@@ -84,6 +86,9 @@ export async function ensureSchemaProperties(
     }
     if (!properties["Synced Status"]) {
       missingProps["Synced Status"] = DATABASE_PROPERTIES["Synced Status"];
+    }
+    if (!properties["Reminder Count"]) {
+      missingProps["Reminder Count"] = DATABASE_PROPERTIES["Reminder Count"];
     }
 
     const missingPropKeys = Object.keys(missingProps);
