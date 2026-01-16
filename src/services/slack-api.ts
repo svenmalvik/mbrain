@@ -38,6 +38,44 @@ export async function addSlackReaction(
   return true;
 }
 
+/** Add done reaction (white_check_mark) to Slack message */
+export async function addDoneReaction(
+  token: string,
+  channelId: string,
+  messageId: string
+): Promise<boolean> {
+  // Rule 5: Runtime assertions - validate input
+  if (!token || typeof token !== "string") {
+    throw new Error("addDoneReaction: token must be a non-empty string");
+  }
+  if (!channelId || typeof channelId !== "string") {
+    throw new Error("addDoneReaction: channelId must be a non-empty string");
+  }
+  if (!messageId || typeof messageId !== "string") {
+    throw new Error("addDoneReaction: messageId must be a non-empty string");
+  }
+
+  const response = await fetch("https://slack.com/api/reactions.add", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      channel: channelId,
+      timestamp: messageId,
+      name: "white_check_mark",
+    }),
+  });
+
+  // Rule 7: Check return values and propagate status
+  if (!response.ok) {
+    console.error(`Slack reactions.add failed: ${response.status}`);
+    return false;
+  }
+  return true;
+}
+
 /** Remove reaction from Slack message (Rule 7: check response, return success status) */
 export async function removeSlackReaction(
   token: string,

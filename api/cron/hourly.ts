@@ -8,7 +8,7 @@ import {
   updateSyncedStatus,
 } from "../../src/services/status-sync.js";
 import {
-  addSlackReaction,
+  addDoneReaction,
   removeSlackReaction,
 } from "../../src/services/slack-api.js";
 
@@ -162,7 +162,7 @@ export default async function handler(
       try {
         if (change.currentStatus === "Done" && change.syncedStatus !== "Done") {
           // Marked as done in Notion - add checkmark reaction
-          await addSlackReaction(token, change.channelId, change.slackMessageId);
+          await addDoneReaction(token, change.channelId, change.slackMessageId);
           await postSlackStatusUpdate(
             token,
             change.channelId,
