@@ -1,9 +1,5 @@
 import { Client } from "@notionhq/client";
-import type { QueryDatabaseParameters } from "@notionhq/client/build/src/api-endpoints.js";
 import { ensureDatabaseExists } from "./notion.js";
-
-/** Filter type for Notion database queries (nested compound filters supported by API) */
-type NotionFilter = NonNullable<QueryDatabaseParameters["filter"]>;
 
 // Rule 5: Validate auth at initialization
 const notionApiKey = process.env.NOTION_API_KEY?.trim();
@@ -54,69 +50,65 @@ const DAILY_THRESHOLD = 3;        // Reminders 1-3: daily (count < 3)
 const EVERY_OTHER_DAY_THRESHOLD = 6; // Reminders 4-5: every other day (3 <= count < 6)
 export const AUTO_PARK_THRESHOLD = 8; // After 8 reminders: auto-park
 
+/** Date property structure from Notion API */
+interface DateProperty {
+  date?: { start?: string } | null;
+}
+
+/** Check if entry needs reminder based on tiered schedule */
+function needsReminder(reminderCount: number, lastReminderDate: string | undefined): boolean {
+  const now = Date.now();
+  const oneDayMs = 24 * 60 * 60 * 1000;
+  const twoDaysMs = 48 * 60 * 60 * 1000;
+  const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
+
+  // No last reminder = always needs one
+  if (!lastReminderDate) {
+    return true;
+  }
+
+  const lastReminderTime = new Date(lastReminderDate).getTime();
+  const timeSinceReminder = now - lastReminderTime;
+
+  // Tier 1: Count < 3 -> daily (24h)
+  if (reminderCount < DAILY_THRESHOLD) {
+    return timeSinceReminder >= oneDayMs;
+  }
+
+  // Tier 2: 3 <= Count < 6 -> every other day (48h)
+  if (reminderCount < EVERY_OTHER_DAY_THRESHOLD) {
+    return timeSinceReminder >= twoDaysMs;
+  }
+
+  // Tier 3: 6 <= Count < 8 -> weekly (7 days)
+  if (reminderCount < AUTO_PARK_THRESHOLD) {
+    return timeSinceReminder >= oneWeekMs;
+  }
+
+  // Count >= 8: should be parked, no reminders
+  return false;
+}
+
 /** Get entries with pending actions that need reminders (Rule 4: short function) */
 export async function getPendingActions(): Promise<PendingAction[]> {
   const dbId = await ensureDatabaseExists();
 
-  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-  const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-
-  // Note: Notion API supports nested compound filters, but SDK types are stricter
-  // Using type assertion as the API accepts this structure
-  const filter = {
-    and: [
-      {
-        property: "Next Action",
-        rich_text: { is_not_empty: true },
-      },
-      {
-        property: "Status",
-        select: { equals: "Open" },
-      },
-      {
-        or: [
-          // Tier 1: Count < 3 (or empty) -> daily reminders (24h)
-          {
-            and: [
-              {
-                or: [
-                  { property: "Reminder Count", number: { is_empty: true } },
-                  { property: "Reminder Count", number: { less_than: DAILY_THRESHOLD } },
-                ],
-              },
-              {
-                or: [
-                  { property: "Last Reminder", date: { is_empty: true } },
-                  { property: "Last Reminder", date: { before: oneDayAgo } },
-                ],
-              },
-            ],
-          },
-          // Tier 2: 3 <= Count < 6 -> every-other-day reminders (48h)
-          {
-            and: [
-              { property: "Reminder Count", number: { greater_than_or_equal_to: DAILY_THRESHOLD } },
-              { property: "Reminder Count", number: { less_than: EVERY_OTHER_DAY_THRESHOLD } },
-              { property: "Last Reminder", date: { before: twoDaysAgo } },
-            ],
-          },
-          // Tier 3: 6 <= Count < 8 -> weekly reminders (7 days)
-          {
-            and: [
-              { property: "Reminder Count", number: { greater_than_or_equal_to: EVERY_OTHER_DAY_THRESHOLD } },
-              { property: "Reminder Count", number: { less_than: AUTO_PARK_THRESHOLD } },
-              { property: "Last Reminder", date: { before: oneWeekAgo } },
-            ],
-          },
-        ],
-      },
-    ],
-  } as NotionFilter;
-
+  // Simple filter: get all Open entries with Next Action
+  // Tiered timing logic is applied in code to avoid Notion's 2-level nesting limit
   const response = await notion.databases.query({
     database_id: dbId,
-    filter,
+    filter: {
+      and: [
+        {
+          property: "Next Action",
+          rich_text: { is_not_empty: true },
+        },
+        {
+          property: "Status",
+          select: { equals: "Open" },
+        },
+      ],
+    },
     page_size: 50,
   });
 
@@ -130,9 +122,10 @@ export async function getPendingActions(): Promise<PendingAction[]> {
     const slackMessageId = extractPlainText(props["Slack Message ID"] as RichTextProperty);
     const channelId = extractPlainText(props["Source Channel"] as RichTextProperty);
     const reminderCount = extractNumber(props["Reminder Count"] as NumberProperty);
+    const lastReminderDate = (props["Last Reminder"] as DateProperty)?.date?.start;
 
-    // Rule 5: Validate required fields
-    if (nextAction && slackMessageId && channelId) {
+    // Rule 5: Validate required fields and check tiered timing
+    if (nextAction && slackMessageId && channelId && needsReminder(reminderCount, lastReminderDate)) {
       pending.push({
         pageId: page.id,
         slackMessageId,
