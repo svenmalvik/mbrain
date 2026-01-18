@@ -126,7 +126,9 @@ export default async function handler(
   }
 
   try {
+    console.log("Cron job started");
     const pendingActions = await getPendingActions();
+    console.log(`Found ${pendingActions.length} pending actions`);
 
     // Rule 2: Fixed loop bounds
     const actionsToProcess = pendingActions.slice(0, MAX_REMINDERS_PER_RUN);
@@ -167,7 +169,9 @@ export default async function handler(
     }
 
     // Status sync: Reflect Notion status changes back to Slack
+    console.log(`Reminders sent: ${remindersSent}`);
     const statusChanges = await getStatusChanges();
+    console.log(`Found ${statusChanges.length} status changes`);
     const changesToProcess = statusChanges.slice(0, MAX_STATUS_SYNCS_PER_RUN);
     let statusSynced = 0;
 
